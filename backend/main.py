@@ -21,6 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from backend.seed_knowledge import seed_knowledge_file
 from config import validate_config, IS_PRODUCTION, ENVIRONMENT
 from pipeline import fetch_transcript, chunk_and_embed, get_transcript_from_chroma
 from agent import create_music_agent, run_agent
@@ -104,8 +105,11 @@ async def lifespan(app: FastAPI):
     if IS_PRODUCTION:
         print("🚀 [startup] Production mode — seeding marketing knowledge base...")
         try:
-            from seed_knowledge import seed_marketing_knowledge
-            seed_marketing_knowledge()
+            from seed_knowledge import seed_knowledge_file
+            seed_knowledge_file(
+                filename="marketing_knowledge.md",
+                collection_name="marketing_knowledge",
+            )
             print("🚀 [startup] Marketing knowledge seeded ✓")
         except Exception as e:
             # Non-fatal: app still works without the knowledge base
