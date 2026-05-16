@@ -1,0 +1,28 @@
+# Virtual environment
+venv/
+.venv/
+
+# Conda
+envs/
+
+# Environment variables (secret keys)
+.env
+.env.save
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# ChromaDB data
+chroma_db/
+
+# VSCode settings
+.vscode/
+
+# Mac files
+.DS_Store
+
+# Node modules (for frontend later)
+node_modules/
+.next/.env.save

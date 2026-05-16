@@ -1,0 +1,137 @@
+{
+  "video_id": "H5v3kku4y6Q",
+  "video_title": "",
+  "video_channel": "Stebuklų šalis demoRequiem",
+  "timestamp": "2026-05-15T12:23:28.626833",
+  "passed": 4,
+  "total": 5,
+  "avg_score": 0.79,
+  "results": [
+    {
+      "test_id": "eval_01",
+      "description": "Song theme and meaning",
+      "passed": true,
+      "keyword_score": 0.75,
+      "tool_score": 1.0,
+      "overall_score": 0.88,
+      "keywords_found": [
+        "song",
+        "theme",
+        "lyrics"
+      ],
+      "keywords_missing": [
+        "meaning"
+      ],
+      "tools_used": [
+        "search_transcript"
+      ],
+      "tools_expected": [
+        "search_transcript"
+      ],
+      "tools_missing": [],
+      "response_length": 1469,
+      "response_preview": "The song \"Stebuklų šalis demoRequiem\" revolves around themes of change, nostalgia, and the struggle with past and present relationships. Here's a brief overview of the main themes and elements capture..."
+    },
+    {
+      "test_id": "eval_02",
+      "description": "Lyrics extraction",
+      "passed": true,
+      "keyword_score": 0.67,
+      "tool_score": 1.0,
+      "overall_score": 0.83,
+      "keywords_found": [
+        "lyrics",
+        "verse"
+      ],
+      "keywords_missing": [
+        "chorus"
+      ],
+      "tools_used": [
+        "extract_lyrics"
+      ],
+      "tools_expected": [
+        "extract_lyrics"
+      ],
+      "tools_missing": [],
+      "response_length": 372,
+      "response_preview": "Here are the lyrics for \"Stebuklų šalis demoRequiem\":\n\n**Verse 1**  \nHolding me back  \nGravity’s holding me back  \nI want you to hold out the palm of your hand  \nWhy don’t we leave it at that?  \nNothi..."
+    },
+    {
+      "test_id": "eval_03",
+      "description": "Marketing analysis with genre detection",
+      "passed": false,
+      "keyword_score": 0.0,
+      "tool_score": 0.5,
+      "overall_score": 0.25,
+      "keywords_found": [],
+      "keywords_missing": [
+        "genre",
+        "audience",
+        "tiktok",
+        "platform"
+      ],
+      "tools_used": [
+        "search_transcript"
+      ],
+      "tools_expected": [
+        "search_transcript",
+        "analyze_marketing_potential"
+      ],
+      "tools_missing": [
+        "analyze_marketing_potential"
+      ],
+      "response_length": 77,
+      "response_preview": "I processed your request but could not generate a response. Please try again."
+    },
+    {
+      "test_id": "eval_04",
+      "description": "Release timing strategy",
+      "passed": true,
+      "keyword_score": 1.0,
+      "tool_score": 1.0,
+      "overall_score": 1.0,
+      "keywords_found": [
+        "release",
+        "week",
+        "strategy",
+        "platform"
+      ],
+      "keywords_missing": [],
+      "tools_used": [
+        "search_transcript",
+        "get_artist_info",
+        "find_release_timing"
+      ],
+      "tools_expected": [
+        "find_release_timing"
+      ],
+      "tools_missing": [],
+      "response_length": 1242,
+      "response_preview": "Here's a comprehensive timeline and checklist for releasing your song, along with key strategies tailored to \"Stebuklų šalis demoRequiem's\" pop genre and audience size:\n\n### Key Dates for Release\n- **..."
+    },
+    {
+      "test_id": "eval_05",
+      "description": "Marketing knowledge — Spotify pitch",
+      "passed": true,
+      "keyword_score": 1.0,
+      "tool_score": 1.0,
+      "overall_score": 1.0,
+      "keywords_found": [
+        "spotify",
+        "pitch",
+        "playlist",
+        "submit"
+      ],
+      "keywords_missing": [],
+      "tools_used": [
+        "search_marketing_knowledge"
+      ],
+      "tools_expected": [
+        "search_marketing_knowledge"
+      ],
+      "tools_missing": [],
+      "response_length": 1545,
+      "response_preview": "Here's a guide to effectively pitch your song to Spotify editorial playlists:\n\n### Description Writing:\n1. **Third Person**: The pitch should be in third person as if a playlist editor is writing it.\n..."
+    }
+  ]
+}
