@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from backend.seed_knowledge import seed_knowledge_file
+from seed_knowledge import seed_knowledge_file
 from config import validate_config, IS_PRODUCTION, ENVIRONMENT
 from pipeline import fetch_transcript, chunk_and_embed, get_transcript_from_chroma
 from agent import create_music_agent, run_agent
