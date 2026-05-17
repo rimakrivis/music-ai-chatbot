@@ -13,7 +13,6 @@
 
 import os
 import re
-import tempfile
 
 import tiktoken
 import yt_dlp
@@ -32,9 +31,6 @@ from config import OPENAI_API_KEY, ASSEMBLYAI_API_KEY, IS_PRODUCTION
 # Path where ChromaDB saves its data on disk.
 # Stays inside the backend/ folder.
 CHROMA_DB_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
-
-# Import IS_PRODUCTION flag so pipeline knows which ChromaDB mode to use
-from config import IS_PRODUCTION
 
 
 # -------------------------------------------------------
@@ -117,9 +113,10 @@ def fetch_video_metadata(video_id: str) -> dict:
 # FUNCTION 1 — fetch_transcript(youtube_url)
 #
 # Step 1: Try youtube-transcript-api (fast, no download)
-#         Fetches captions in any available language
+#         Uses Webshare proxy if credentials are set (needed on Render)
 # Step 2: If captions disabled, fall back to:
-#         yt-dlp downloads audio → AssemblyAI transcribes it
+#         AssemblyAI direct YouTube URL transcription
+#         No yt-dlp download needed — works on cloud servers
 #         AssemblyAI auto-detects language — works for
 #         Lithuanian, English, Spanish, and 100+ languages
 # Returns a dict with all video info + transcript text
@@ -135,93 +132,64 @@ def fetch_transcript(youtube_url: str) -> dict:
     source = None
 
     # --- Attempt 1: youtube-transcript-api ---
-    # Tries to fetch captions in any available language
+    # Uses Webshare proxy on Render so YouTube doesn't block the request
     print(f"[pipeline] Attempting youtube-transcript-api...")
     try:
-        ytt_api = YouTubeTranscriptApi()
-
-        # Try to get transcript in any available language
         from youtube_transcript_api.proxies import WebshareProxyConfig
-        ytt_api = YouTubeTranscriptApi(
-            proxy_config=WebshareProxyConfig(
-                proxy_username=os.getenv("WEBSHARE_USERNAME", ""),
-                proxy_password=os.getenv("WEBSHARE_PASSWORD", ""),
+
+        if os.getenv("WEBSHARE_USERNAME"):
+            print(f"[pipeline] Using Webshare proxy...")
+            ytt_api = YouTubeTranscriptApi(
+                proxy_config=WebshareProxyConfig(
+                    proxy_username=os.getenv("WEBSHARE_USERNAME", ""),
+                    proxy_password=os.getenv("WEBSHARE_PASSWORD", ""),
+                )
             )
-        ) if os.getenv("WEBSHARE_USERNAME") else YouTubeTranscriptApi()
+        else:
+            print(f"[pipeline] No proxy configured, connecting directly...")
+            ytt_api = YouTubeTranscriptApi()
+
         transcript_list = ytt_api.fetch(video_id)
         transcript_text = " ".join([entry.text for entry in transcript_list])
         source = "youtube_api"
         print(f"[pipeline] ✅ Transcript fetched via youtube-transcript-api")
         print(f"[pipeline] Word count: {len(transcript_text.split())}")
+
     except NoTranscriptFound:
-        # Try fetching in any language if default fails
-        print(f"[pipeline] No transcript in default language, trying all languages...")
-        try:
-            from youtube_transcript_api import YouTubeTranscriptApi as YTA
-            transcript_list = YTA.list_transcripts(video_id)
-            transcript = transcript_list.find_a_transcript(
-                transcript_list._manually_created_transcripts.keys() or
-                transcript_list._generated_transcripts.keys()
-            )
-            fetched = transcript.fetch()
-            transcript_text = " ".join([entry.text for entry in fetched])
-            source = "youtube_api"
-            print(f"[pipeline] ✅ Transcript fetched in {transcript.language}")
-            print(f"[pipeline] Word count: {len(transcript_text.split())}")
-        except Exception as e:
-            print(f"[pipeline] All language fetch failed: {e}")
-            print(f"[pipeline] Falling back to yt-dlp + AssemblyAI...")
+        print(f"[pipeline] No transcript found, falling back to AssemblyAI...")
+
     except Exception as e:
         print(f"[pipeline] youtube-transcript-api failed: {type(e).__name__}: {e}")
-        print(f"[pipeline] Falling back to yt-dlp + AssemblyAI...")
+        print(f"[pipeline] Falling back to AssemblyAI...")
 
-    # --- Attempt 2: yt-dlp download + AssemblyAI ---
-    # AssemblyAI auto-detects language — works for 100+ languages
+    # --- Attempt 2: AssemblyAI direct YouTube URL ---
+    # No yt-dlp download needed — AssemblyAI fetches audio directly from YouTube
+    # This works on cloud servers (Render) where yt-dlp gets bot-blocked
     if transcript_text is None:
         try:
-            print(f"[pipeline] Downloading audio with yt-dlp...")
+            youtube_url_direct = f"https://www.youtube.com/watch?v={video_id}"
+            print(f"[pipeline] Sending YouTube URL directly to AssemblyAI...")
+            print(f"[pipeline] AssemblyAI will auto-detect the language...")
 
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                audio_path = os.path.join(tmp_dir, "audio.mp3")
+            # Configure AssemblyAI with language detection
+            # Works for Lithuanian, English, Spanish, French, and 100+ languages
+            aai.settings.api_key = ASSEMBLYAI_API_KEY
+            config = aai.TranscriptionConfig(
+                language_detection=True,
+                speech_models=[aai.SpeechModel.universal]
+            )
+            transcriber = aai.Transcriber(config=config)
+            aai_transcript = transcriber.transcribe(youtube_url_direct)
 
-                ydl_opts = {
-                    "format": "bestaudio/best",
-                    "outtmpl": os.path.join(tmp_dir, "audio"),
-                    "quiet": True,
-                    "no_warnings": True,
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "128",
-                    }],
-                }
+            if aai_transcript.status == aai.TranscriptStatus.error:
+                raise RuntimeError(f"AssemblyAI error: {aai_transcript.error}")
 
-                url = f"https://www.youtube.com/watch?v={video_id}"
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
-
-                print(f"[pipeline] Audio downloaded. Sending to AssemblyAI for transcription...")
-                print(f"[pipeline] AssemblyAI will auto-detect the language...")
-
-                # Configure AssemblyAI with language detection
-                # Works for Lithuanian, English, Spanish, French, and 100+ languages
-                aai.settings.api_key = ASSEMBLYAI_API_KEY
-                config = aai.TranscriptionConfig(
-                    language_detection=True,
-                    speech_models=[aai.SpeechModel.universal]
-                )
-                transcriber = aai.Transcriber(config=config)
-                aai_transcript = transcriber.transcribe(audio_path)
-
-                if aai_transcript.status == aai.TranscriptStatus.error:
-                    raise RuntimeError(f"AssemblyAI error: {aai_transcript.error}")
-
-                transcript_text = aai_transcript.text.strip()
-                detected_language = getattr(aai_transcript, 'language_code', 'unknown')
-                source = "assemblyai"
-                print(f"[pipeline] ✅ Transcript fetched via AssemblyAI")
-                print(f"[pipeline] Detected language: {detected_language}")
-                print(f"[pipeline] Word count: {len(transcript_text.split())}")
+            transcript_text = aai_transcript.text.strip()
+            detected_language = getattr(aai_transcript, 'language_code', 'unknown')
+            source = "assemblyai"
+            print(f"[pipeline] ✅ Transcript fetched via AssemblyAI")
+            print(f"[pipeline] Detected language: {detected_language}")
+            print(f"[pipeline] Word count: {len(transcript_text.split())}")
 
         except Exception as e:
             raise RuntimeError(
