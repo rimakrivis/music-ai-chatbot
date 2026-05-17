@@ -141,7 +141,13 @@ def fetch_transcript(youtube_url: str) -> dict:
         ytt_api = YouTubeTranscriptApi()
 
         # Try to get transcript in any available language
-        ytt_api = YouTubeTranscriptApi()
+        from youtube_transcript_api.proxies import WebshareProxyConfig
+        ytt_api = YouTubeTranscriptApi(
+            proxy_config=WebshareProxyConfig(
+                proxy_username=os.getenv("WEBSHARE_USERNAME", ""),
+                proxy_password=os.getenv("WEBSHARE_PASSWORD", ""),
+            )
+        ) if os.getenv("WEBSHARE_USERNAME") else YouTubeTranscriptApi()
         transcript_list = ytt_api.fetch(video_id)
         transcript_text = " ".join([entry.text for entry in transcript_list])
         source = "youtube_api"
