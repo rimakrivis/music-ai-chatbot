@@ -141,7 +141,7 @@ def fetch_transcript(youtube_url: str) -> dict:
         ytt_api = YouTubeTranscriptApi()
 
         # Try to get transcript in any available language
-        transcript_list = ytt_api.fetch(video_id)
+        transcript_list = YouTubeTranscriptApi.fetch(video_id)
         transcript_text = " ".join([entry.text for entry in transcript_list])
         source = "youtube_api"
         print(f"[pipeline] ✅ Transcript fetched via youtube-transcript-api")
