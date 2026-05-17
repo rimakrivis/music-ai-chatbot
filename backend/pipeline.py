@@ -293,12 +293,20 @@ def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
     print(f"[pipeline] Embedding chunks and storing in ChromaDB...")
     print(f"[pipeline] This may take 10-30 seconds depending on transcript length...")
 
-    vector_store = Chroma.from_texts(
-        texts=chunks,
-        embedding=embeddings,
-        collection_name=collection_name,
-        persist_directory=CHROMA_DB_PATH,
-    )
+    if IS_PRODUCTION:
+        vector_store = Chroma.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            collection_name=collection_name,
+            client=chroma_client,
+        )
+    else:
+        vector_store = Chroma.from_texts(
+            texts=chunks,
+            embedding=embeddings,
+            collection_name=collection_name,
+            persist_directory=CHROMA_DB_PATH,
+        )
 
     print(f"[pipeline] ✅ {len(chunks)} chunks stored in collection '{collection_name}'")
     print(f"[pipeline] ── chunk_and_embed complete ──\n")
