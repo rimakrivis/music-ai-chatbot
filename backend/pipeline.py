@@ -149,7 +149,7 @@ def fetch_transcript(youtube_url: str) -> dict:
             print(f"[pipeline] No proxy configured, connecting directly...")
             ytt_api = YouTubeTranscriptApi()
 
-        transcript_list = ytt_api.fetch(video_id)
+        transcript_list = ytt_api.fetch(video_id, languages=['en', 'lt', 'de', 'fr', 'es', 'it', 'pt', 'ru', 'ja', 'ko', 'nl', 'pl', 'sv', 'da', 'fi', 'nb'])
         transcript_text = " ".join([entry.text for entry in transcript_list])
         source = "youtube_api"
         print(f"[pipeline] ✅ Transcript fetched via youtube-transcript-api")
