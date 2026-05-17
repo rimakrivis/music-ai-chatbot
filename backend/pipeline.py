@@ -149,7 +149,14 @@ def fetch_transcript(youtube_url: str) -> dict:
             print(f"[pipeline] No proxy configured, connecting directly...")
             ytt_api = YouTubeTranscriptApi()
 
-        transcript_list = ytt_api.fetch(video_id, languages=['en', 'lt', 'de', 'fr', 'es', 'it', 'pt', 'ru', 'ja', 'ko', 'nl', 'pl', 'sv', 'da', 'fi', 'nb'])
+        transcripts = ytt_api.list(video_id)
+        # Prefer auto-generated — these work on cloud servers
+        # Fall back to manually created if no auto-generated exists
+        try:
+            transcript = transcripts.find_generated_transcript(['en', 'lt', 'de', 'fr', 'es', 'it', 'pt', 'ru', 'ja', 'ko'])
+        except Exception:
+            transcript = transcripts.find_manually_created_transcript(['en', 'lt', 'de', 'fr', 'es', 'it', 'pt', 'ru', 'ja', 'ko'])
+        transcript_list = transcript.fetch()
         transcript_text = " ".join([entry.text for entry in transcript_list])
         source = "youtube_api"
         print(f"[pipeline] ✅ Transcript fetched via youtube-transcript-api")
