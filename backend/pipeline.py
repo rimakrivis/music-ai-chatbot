@@ -251,10 +251,32 @@ def fetch_transcript(youtube_url: str) -> dict:
     transcript_text = None
     source = None
 
-    # --- Attempt 1: YouTube Data API v3 ---
-    transcript_text = fetch_transcript_youtube_api(video_id)
-    if transcript_text:
-        source = "youtube_data_api"
+    # --- Attempt 1: Supadata API (works from any server, never blocked) ---
+    try:
+        supadata_key = os.getenv("SUPADATA_API_KEY")
+        if supadata_key:
+            print(f"[pipeline] Attempting Supadata API...")
+            response = httpx.get(
+                f"https://api.supadata.ai/v1/youtube/transcript",
+                params={"videoId": video_id, "text": "true"},
+                headers={"x-api-key": supadata_key},
+                timeout=30,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                transcript_text = data.get("content", "")
+                if transcript_text:
+                    source = "supadata"
+                    print(f"[pipeline] ✅ Transcript fetched via Supadata")
+                    print(f"[pipeline] Word count: {len(transcript_text.split())}")
+    except Exception as e:
+        print(f"[pipeline] Supadata failed: {e}")
+
+    # --- Attempt 2: YouTube Data API v3 ---
+    if transcript_text is None:
+        transcript_text = fetch_transcript_youtube_api(video_id)
+        if transcript_text:
+            source = "youtube_data_api"
 
     # --- Attempt 2: youtube-transcript-api ---
     if transcript_text is None:
