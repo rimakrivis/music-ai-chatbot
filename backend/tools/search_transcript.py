@@ -8,9 +8,8 @@
 from langchain_core.tools import tool
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, IS_PRODUCTION
 
-# Reuse the same embedding model from Day 1
 embeddings = OpenAIEmbeddings(
     model="text-embedding-3-small",
     api_key=OPENAI_API_KEY
@@ -27,35 +26,40 @@ def search_transcript(query: str, video_id: str) -> str:
     Use this tool when the user asks about the song's content, meaning, themes,
     specific lines, or anything that requires reading the transcript.
     Returns the top 3 most relevant transcript chunks with timestamps.
-
     Args:
         query: The search query describing what to look for in the transcript.
         video_id: The YouTube video ID (e.g. 'H5v3kku4y6Q').
     """
     print(f"\n🔍 [search_transcript] Query: '{query}' | Video: {video_id}")
-
     collection_name = f"video_{video_id}"
 
     try:
-        # Connect to the existing ChromaDB collection created in pipeline.py
-        vectorstore = Chroma(
-            collection_name=collection_name,
-            embedding_function=embeddings,
-            persist_directory=CHROMA_PATH
-        )
+        from pipeline import get_chroma_client
+
+        if IS_PRODUCTION:
+            chroma_client = get_chroma_client()
+            vectorstore = Chroma(
+                collection_name=collection_name,
+                embedding_function=embeddings,
+                client=chroma_client,
+            )
+        else:
+            vectorstore = Chroma(
+                collection_name=collection_name,
+                embedding_function=embeddings,
+                persist_directory=CHROMA_PATH,
+            )
+
         print(f"   Connected to ChromaDB collection: {collection_name}")
 
-        # Run similarity search — returns top 3 most relevant chunks
         results = vectorstore.similarity_search(query, k=3)
 
         if not results:
             print("   No results found in ChromaDB.")
             return "No relevant transcript content found for that query."
 
-        # Format results clearly so the agent can read them
         formatted = []
         for i, doc in enumerate(results, start=1):
-            # Metadata may include a timestamp if stored during chunking
             timestamp = doc.metadata.get("timestamp", "unknown time")
             chunk_text = doc.page_content.strip()
             formatted.append(f"[Chunk {i} | ~{timestamp}]\n{chunk_text}")
