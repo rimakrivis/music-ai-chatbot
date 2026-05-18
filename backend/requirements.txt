@@ -68,7 +68,7 @@ opentelemetry-semantic-conventions==0.62b1
 orjson==3.11.9
 ormsgpack==1.12.2
 overrides==7.7.0
-packaging==26.0
+packaging>=24.2,<25.0
 propcache==0.5.2
 protobuf==6.33.6
 pybase64==1.4.3
