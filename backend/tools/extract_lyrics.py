@@ -4,15 +4,13 @@
 # into properly formatted song lyrics — removing timestamps, fixing
 # auto-caption errors, and adding verse/chorus structure.
 
+import os
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-from config import OPENAI_API_KEY, IS_PRODUCTION
+from config import OPENAI_API_KEY
 
-from pathlib import Path
-CHROMA_PATH = str(Path(__file__).parent.parent / "chroma_db")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai-chat")
 
 embeddings = OpenAIEmbeddings(
     model="text-embedding-3-small",
@@ -26,43 +24,26 @@ llm = ChatOpenAI(
 )
 
 
-def _get_full_transcript_from_chroma(video_id: str) -> str:
+def _get_full_transcript_from_pinecone(video_id: str) -> str:
     """
-    Retrieves all stored chunks for a video from ChromaDB and
+    Retrieves all stored chunks for a video from Pinecone and
     reassembles them into a single transcript string.
     """
-    print(f"   Fetching all chunks from ChromaDB for video: {video_id}")
-    collection_name = f"video_{video_id}"
+    print(f"   Fetching all chunks from Pinecone for video: {video_id}")
 
     try:
-        from pipeline import get_chroma_client
+        from pipeline import get_transcript_from_pinecone
+        result = get_transcript_from_pinecone(video_id)
 
-        if IS_PRODUCTION:
-            chroma_client = get_chroma_client()
-            vectorstore = Chroma(
-                collection_name=collection_name,
-                embedding_function=embeddings,
-                client=chroma_client,
-            )
-        else:
-            vectorstore = Chroma(
-                collection_name=collection_name,
-                embedding_function=embeddings,
-                persist_directory=CHROMA_PATH,
-            )
-
-        collection = vectorstore.get()
-        documents = collection.get("documents", [])
-
-        if not documents:
+        if not result:
             return ""
 
-        full_text = " ".join(documents)
-        print(f"   Retrieved {len(documents)} chunks, total length: {len(full_text)} chars")
+        full_text = result["transcript_text"]
+        print(f"   Retrieved transcript, total length: {len(full_text)} chars")
         return full_text
 
     except Exception as e:
-        print(f"   ❌ Error fetching from ChromaDB: {str(e)}")
+        print(f"   ❌ Error fetching from Pinecone: {str(e)}")
         return ""
 
 
@@ -78,7 +59,7 @@ def extract_lyrics(video_id: str) -> str:
     """
     print(f"\n🎵 [extract_lyrics] Extracting lyrics for video: {video_id}")
 
-    raw_transcript = _get_full_transcript_from_chroma(video_id)
+    raw_transcript = _get_full_transcript_from_pinecone(video_id)
 
     if not raw_transcript:
         return (

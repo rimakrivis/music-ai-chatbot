@@ -4,7 +4,7 @@
 #
 # fetch_transcript()   → gets text from a YouTube video
 # chunk_and_embed()    → splits text into chunks and stores
-#                        them as vectors in ChromaDB
+#                        them as vectors in Pinecone
 #
 # Transcript strategy (in order):
 #   1. Supadata API         — works from any server, never blocked
@@ -18,45 +18,62 @@
 import os
 import re
 import tempfile
+import time
 
 import httpx
 import tiktoken
 import yt_dlp
-import chromadb
 import assemblyai as aai
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
+from langchain_pinecone import PineconeVectorStore
+from pinecone import Pinecone, ServerlessSpec
 
-from config import OPENAI_API_KEY, ASSEMBLYAI_API_KEY, IS_PRODUCTION
+from config import OPENAI_API_KEY, ASSEMBLYAI_API_KEY
 
-
-# Path where ChromaDB saves its data on disk.
-CHROMA_DB_PATH = os.path.join(os.path.dirname(__file__), "chroma_db")
 
 # YouTube Data API v3 base URL
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
+# Pinecone config
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai")
+
 
 # -------------------------------------------------------
-# SINGLETON CHROMA CLIENT
-# Creates one ChromaDB client and reuses it across all requests.
-# Prevents "collection already exists" conflicts.
+# SINGLETON PINECONE CLIENT
+# Creates one Pinecone client and reuses it across all requests.
 # -------------------------------------------------------
-_chroma_client = None
+_pinecone_client = None
+_pinecone_index = None
 
-def get_chroma_client():
-    global _chroma_client
-    if _chroma_client is None:
-        _chroma_client = (
-            chromadb.EphemeralClient()
-            if IS_PRODUCTION
-            else chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        )
-    return _chroma_client
+def get_pinecone_index():
+    global _pinecone_client, _pinecone_index
+    if _pinecone_index is None:
+        print(f"[pipeline] Initialising Pinecone client...")
+        _pinecone_client = Pinecone(api_key=PINECONE_API_KEY)
+
+        # Create index if it doesn't exist yet
+        existing = [i.name for i in _pinecone_client.list_indexes()]
+        if PINECONE_INDEX_NAME not in existing:
+            print(f"[pipeline] Creating Pinecone index '{PINECONE_INDEX_NAME}'...")
+            _pinecone_client.create_index(
+                name=PINECONE_INDEX_NAME,
+                dimension=1536,  # text-embedding-3-small dimension
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region="us-east-1"),
+            )
+            # Wait for index to be ready
+            while not _pinecone_client.describe_index(PINECONE_INDEX_NAME).status["ready"]:
+                print(f"[pipeline] Waiting for index to be ready...")
+                time.sleep(2)
+
+        _pinecone_index = _pinecone_client.Index(PINECONE_INDEX_NAME)
+        print(f"[pipeline] ✅ Pinecone index '{PINECONE_INDEX_NAME}' ready")
+    return _pinecone_index
 
 
 # -------------------------------------------------------
@@ -373,6 +390,8 @@ def fetch_transcript(youtube_url: str) -> dict:
 
 # -------------------------------------------------------
 # FUNCTION 2 — chunk_and_embed(video_id, transcript_text)
+# Splits transcript into chunks and stores in Pinecone
+# under namespace "video_{video_id}"
 # -------------------------------------------------------
 def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
     print(f"\n[pipeline] ── Starting chunk_and_embed ──")
@@ -381,6 +400,9 @@ def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
 
     total_tokens = count_tokens(transcript_text)
     print(f"[pipeline] Full transcript: {total_tokens} tokens")
+
+    if not transcript_text.strip():
+        raise ValueError("[pipeline] Transcript is empty — cannot embed.")
 
     print(f"[pipeline] Splitting transcript into chunks...")
     splitter = RecursiveCharacterTextSplitter(
@@ -391,71 +413,86 @@ def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
     chunks = splitter.split_text(transcript_text)
     print(f"[pipeline] Created {len(chunks)} chunks")
 
+    if not chunks:
+        raise ValueError("[pipeline] Transcript produced no chunks — it may be empty.")
+
     print(f"[pipeline] Initialising OpenAI embeddings (text-embedding-3-small)...")
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small",
         openai_api_key=OPENAI_API_KEY
     )
 
-    print(f"[pipeline] Connecting to ChromaDB...")
-    collection_name = f"video_{video_id}"
-    chroma_client = get_chroma_client()
-
-    existing_collections = [c.name for c in chroma_client.list_collections()]
-    if collection_name in existing_collections:
-        print(f"[pipeline] Collection '{collection_name}' already exists — deleting and recreating...")
-        chroma_client.delete_collection(name=collection_name)
-
-    print(f"[pipeline] Embedding chunks and storing in ChromaDB...")
+    namespace = f"video_{video_id}"
+    print(f"[pipeline] Storing chunks in Pinecone namespace '{namespace}'...")
     print(f"[pipeline] This may take 10-30 seconds depending on transcript length...")
 
-    if IS_PRODUCTION:
-        vector_store = Chroma.from_texts(
-            texts=chunks,
-            embedding=embeddings,
-            collection_name=collection_name,
-            client=chroma_client,
-        )
-    else:
-        vector_store = Chroma.from_texts(
-            texts=chunks,
-            embedding=embeddings,
-            collection_name=collection_name,
-            persist_directory=CHROMA_DB_PATH,
-        )
+    # Delete existing vectors for this video before reinserting
+    index = get_pinecone_index()
+    try:
+        index.delete(delete_all=True, namespace=namespace)
+        print(f"[pipeline] Cleared existing vectors for namespace '{namespace}'")
+    except Exception:
+        pass  # Namespace may not exist yet — that's fine
 
-    print(f"[pipeline] ✅ {len(chunks)} chunks stored in collection '{collection_name}'")
+    PineconeVectorStore.from_texts(
+        texts=chunks,
+        embedding=embeddings,
+        index_name=PINECONE_INDEX_NAME,
+        namespace=namespace,
+    )
+
+    print(f"[pipeline] ✅ {len(chunks)} chunks stored in Pinecone namespace '{namespace}'")
     print(f"[pipeline] ── chunk_and_embed complete ──\n")
 
     return {
         "video_id": video_id,
         "chunks_created": len(chunks),
-        "collection_name": collection_name,
+        "namespace": namespace,
         "status": "success",
     }
 
 
 # -------------------------------------------------------
-# HELPER — get_transcript_from_chroma(video_id)
+# HELPER — get_transcript_from_pinecone(video_id)
+# Reads all chunks back from Pinecone and reassembles them.
+# Used by the agent's extract_lyrics tool.
+# Returns None if the video has not been analyzed yet.
 # -------------------------------------------------------
-def get_transcript_from_chroma(video_id: str) -> dict | None:
-    collection_name = f"video_{video_id}"
-    print(f"[get_transcript_from_chroma] Looking up: {collection_name}")
+def get_transcript_from_pinecone(video_id: str) -> dict | None:
+    namespace = f"video_{video_id}"
+    print(f"[get_transcript_from_pinecone] Looking up namespace: {namespace}")
 
     try:
-        chroma_client = get_chroma_client()
-        collection = chroma_client.get_collection(name=collection_name)
-        results = collection.get(include=["documents"])
+        embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=OPENAI_API_KEY
+        )
+        vector_store = PineconeVectorStore(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embeddings,
+            namespace=namespace,
+        )
+        # Fetch up to 100 chunks with a broad query
+        results = vector_store.similarity_search("lyrics transcript song", k=100)
 
-        if not results["documents"]:
+        if not results:
             return None
 
-        full_text = " ".join(results["documents"])
+        full_text = " ".join([doc.page_content for doc in results])
         return {
             "transcript_text": full_text,
             "word_count": len(full_text.split()),
         }
 
     except Exception as e:
-        print(f"[get_transcript_from_chroma] Not found: {e}")
+        print(f"[get_transcript_from_pinecone] Not found: {e}")
         return None
+
+
+# -------------------------------------------------------
+# BACKWARDS COMPATIBILITY ALIAS
+# Any file still calling get_transcript_from_chroma() will
+# automatically use the Pinecone version without needing changes.
+# -------------------------------------------------------
+def get_transcript_from_chroma(video_id: str) -> dict | None:
+    return get_transcript_from_pinecone(video_id)

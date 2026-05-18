@@ -3,7 +3,7 @@
 # Wires all 6 tools into create_agent (LangChain 1.0).
 # Uses InMemorySaver for per-session conversation memory.
 # Injects video_id into the system prompt at runtime so tools
-# know which ChromaDB collection to query.
+# know which Pinecone namespace to query.
 # Tracks tools_used[] so the frontend can show tool badges.
 
 from langchain.agents import create_agent
@@ -72,46 +72,47 @@ Never leave [Song Title], [Artist Name], or [YouTube Link] as placeholders — y
 SCOPE: Only answer music-related questions. Politely decline anything else.
 
 TOOLS:
-- search_transcript → search song content, themes, mood, lyrics. Use query like "mood energy genre chorus hook feeling" for marketing prep.
+- search_transcript → search song content, themes, mood, lyrics
 - extract_lyrics → full cleaned lyrics
-- analyze_marketing_potential → TikTok potential, audience, platform recommendations. REQUIRES transcript_text from search_transcript.
+- analyze_marketing_potential → requires transcript_text from search_transcript
 - get_artist_info → Spotify stats, popularity, top tracks, genres
 - find_release_timing → release date strategy, teaser schedule
-- search_marketing_knowledge → HOW-TO knowledge: timelines, radio rules, social media plans, Spotify pitch, press release, budget strategy
+- search_marketing_knowledge → YOUR PRIMARY KNOWLEDGE SOURCE. Call this first for any marketing, release, social media, playlist, radio, press, budget, or deadline question. Never answer these from general knowledge — always check this tool first.
 
-MANDATORY TOOL CALL ORDER — follow these chains exactly, every time:
+KNOWLEDGE BASE FIRST — CRITICAL RULE:
+For ANY marketing, release, social media, playlist, radio, press, budget, or deadline question:
+ALWAYS call search_marketing_knowledge FIRST.
+If it returns relevant content → use it as primary source.
+If nothing relevant → then use general knowledge.
+Never skip this. Never answer marketing questions from memory alone.
 
-1. MARKETING ANALYSIS (any question about marketing, TikTok, audience, platforms, commercial appeal):
+MANDATORY TOOL CALL ORDER:
+
+1. MARKETING PLAN / STRATEGY:
+   STEP 1 → search_marketing_knowledge(query=<user question summarized>)
+   STEP 2 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
+   STEP 3 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 2 result>)
+   STEP 4 → find_release_timing(genre=<from step 2>, audience_size=<known or ask>)
+
+2. RELEASE STRATEGY / TIMELINE / DEADLINES:
+   STEP 1 → search_marketing_knowledge(query=<user question>)
+   STEP 2 → find_release_timing(genre=<known>, audience_size=<known or ask>)
+
+3. HOW-TO QUESTIONS (pitching, radio, press release, social plan, playlist, budget):
+   STEP 1 → search_marketing_knowledge(query=<user question>)
+
+4. SONG ANALYSIS:
    STEP 1 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
-   STEP 2 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<result from step 1>)
-   NEVER call analyze_marketing_potential without calling search_transcript first.
-   NEVER infer genre or mood from the song title or artist name — only from transcript content.
+   STEP 2 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 1 result>)
 
-2. RELEASE STRATEGY:
-   STEP 1 → search_transcript(video_id="{video_id}", query="mood energy chorus")
-   STEP 2 → get_artist_info(artist_name="{video_channel}")
-   STEP 3 → find_release_timing(genre=<from step 1>, audience_size=<from step 2>)
-
-3. HOW-TO QUESTIONS (timelines, pitching, radio, press release, social plan):
-   STEP 1 → search_marketing_knowledge(query=<user's question>)
-   Then answer using the retrieved knowledge.
-
-4. LYRICS REQUEST:
+5. LYRICS REQUEST:
    STEP 1 → extract_lyrics(video_id="{video_id}")
 
-STAGED OUTPUT — CRITICAL:
-- For any marketing template (radio pitch, press release, Spotify pitch, email, social plan):
-  Step 1: Give the timeline and checklist only
-  Step 2: Stop and ask "Would you like me to generate the full [template name] now?"
-  Step 3: Only generate the full template when the user explicitly confirms
-- Never output a full template in the first response
-
-RESPONSE RULES:
-- Match the user's language at all times
-- Warm, professional tone — expert manager and mentor
-- Never invent stats, genre labels, or data not returned by tools
-- End every response with ONE clear next action the user should take"""
-
+   If search_marketing_knowledge returns weak, generic, or unrelated information:
+- acknowledge the limitation internally
+- use general marketing expertise instead
+- only incorporate the useful parts of the knowledge base
+"""
 
 # ---------------------------------------------------------------------------
 # Agent factory
@@ -199,4 +200,5 @@ async def run_agent(
             "tools_used": [],
             "session_id": session_id,
             "error": error_msg
-        }
+        } 
+

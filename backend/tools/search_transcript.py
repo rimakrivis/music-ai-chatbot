@@ -1,22 +1,22 @@
 # backend/tools/search_transcript.py
 # Tool 1: search_transcript
-# Searches ChromaDB for transcript chunks relevant to the user's query.
+# Searches Pinecone for transcript chunks relevant to the user's query.
 # Uses cosine similarity via OpenAI embeddings (text-embedding-3-small).
 # This is the core RAG tool — the agent calls this whenever the user
 # asks anything about the song's content, lyrics, or meaning.
 
+import os
 from langchain_core.tools import tool
-from langchain_chroma import Chroma
+from langchain_pinecone import PineconeVectorStore
 from langchain_openai import OpenAIEmbeddings
-from config import OPENAI_API_KEY, IS_PRODUCTION
+from config import OPENAI_API_KEY
+
+PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai-chat")
 
 embeddings = OpenAIEmbeddings(
     model="text-embedding-3-small",
     api_key=OPENAI_API_KEY
 )
-
-from pathlib import Path
-CHROMA_PATH = str(Path(__file__).parent.parent / "chroma_db")
 
 
 @tool
@@ -31,31 +31,21 @@ def search_transcript(query: str, video_id: str) -> str:
         video_id: The YouTube video ID (e.g. 'H5v3kku4y6Q').
     """
     print(f"\n🔍 [search_transcript] Query: '{query}' | Video: {video_id}")
-    collection_name = f"video_{video_id}"
+    namespace = f"video_{video_id}"
 
     try:
-        from pipeline import get_chroma_client
+        vectorstore = PineconeVectorStore(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embeddings,
+            namespace=namespace,
+        )
 
-        if IS_PRODUCTION:
-            chroma_client = get_chroma_client()
-            vectorstore = Chroma(
-                collection_name=collection_name,
-                embedding_function=embeddings,
-                client=chroma_client,
-            )
-        else:
-            vectorstore = Chroma(
-                collection_name=collection_name,
-                embedding_function=embeddings,
-                persist_directory=CHROMA_PATH,
-            )
-
-        print(f"   Connected to ChromaDB collection: {collection_name}")
+        print(f"   Connected to Pinecone namespace: {namespace}")
 
         results = vectorstore.similarity_search(query, k=3)
 
         if not results:
-            print("   No results found in ChromaDB.")
+            print("   No results found in Pinecone.")
             return "No relevant transcript content found for that query."
 
         formatted = []

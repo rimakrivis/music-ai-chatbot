@@ -24,21 +24,16 @@ ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
 
 # --- LangSmith ---
 LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
-LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", LANGCHAIN_API_KEY)  # fallback to LANGCHAIN_API_KEY
+LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", LANGCHAIN_API_KEY)
 LANGCHAIN_TRACING_V2: str = os.getenv("LANGCHAIN_TRACING_V2", "false")
 LANGSMITH_TRACING: str = os.getenv("LANGSMITH_TRACING", "false")
 LANGCHAIN_PROJECT: str = os.getenv("LANGCHAIN_PROJECT", "music-ai-chatbot")
 
 # --- Environment mode ---
-# "local"      → ChromaDB PersistentClient (saves to disk)
-# "production" → ChromaDB EphemeralClient (in-memory, for Railway free tier)
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "local")
 
 # --- Derived flags ---
 IS_PRODUCTION: bool = ENVIRONMENT == "production"
-
-# --- ChromaDB path (only used in local mode) ---
-CHROMA_DB_PATH: str = os.path.join(os.path.dirname(__file__), "chroma_db")
 
 # --- Startup validation ---
 def validate_config() -> None:
@@ -63,5 +58,5 @@ def validate_config() -> None:
 
     print(f"[config] Environment: {ENVIRONMENT}")
     print(f"[config] LangSmith tracing: {LANGCHAIN_TRACING_V2}")
-    print(f"[config] ChromaDB mode: {'in-memory (EphemeralClient)' if IS_PRODUCTION else 'persistent (PersistentClient)'}")
+    print(f"[config] Vector store: Pinecone")
     print("[config] All required environment variables loaded ✓")
