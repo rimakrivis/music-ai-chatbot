@@ -3,7 +3,8 @@ import chromadb
 from langchain.tools import tool
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, IS_PRODUCTION
+from pipeline import get_chroma_client
 
 CHROMA_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "chroma_db")
 
@@ -22,11 +23,19 @@ def search_marketing_knowledge(query: str) -> str:
             model="text-embedding-3-small",
             openai_api_key=OPENAI_API_KEY
         )
-        vector_store = Chroma(
-            collection_name="marketing_knowledge",
-            embedding_function=embeddings,
-            persist_directory=CHROMA_DB_PATH,
-        )
+        if IS_PRODUCTION:
+            chroma_client = get_chroma_client()
+            vector_store = Chroma(
+                collection_name="marketing_knowledge",
+                embedding_function=embeddings,
+                client=chroma_client,
+            )
+        else:
+            vector_store = Chroma(
+                collection_name="marketing_knowledge",
+                embedding_function=embeddings,
+                persist_directory=CHROMA_DB_PATH,
+            )
         results = vector_store.similarity_search(query, k=3)
         if not results:
             return "No relevant marketing knowledge found."

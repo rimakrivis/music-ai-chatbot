@@ -20,7 +20,8 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.messages import SystemMessage, HumanMessage
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, IS_PRODUCTION
+from pipeline import get_chroma_client
 from pathlib import Path
 
 CHROMA_PATH = str(Path(__file__).parent.parent / "chroma_db")
@@ -44,11 +45,19 @@ def _search_knowledge(query: str) -> str:
     Called internally — not exposed as a tool.
     """
     try:
-        kb = Chroma(
-            collection_name="marketing_knowledge",
-            embedding_function=embeddings,
-            persist_directory=CHROMA_PATH
-        )
+        if IS_PRODUCTION:
+            chroma_client = get_chroma_client()
+            kb = Chroma(
+                collection_name="marketing_knowledge",
+                embedding_function=embeddings,
+                client=chroma_client,
+            )
+        else:
+            kb = Chroma(
+                collection_name="marketing_knowledge",
+                embedding_function=embeddings,
+                persist_directory=CHROMA_PATH,
+            )
         results = kb.similarity_search(query, k=3)
         knowledge = "\n\n".join([doc.page_content for doc in results])
         print(f"   📚 Retrieved {len(results)} marketing knowledge chunks")
