@@ -26,3 +26,5 @@ chroma_db/
 # Node modules (for frontend later)
 node_modules/
 .next/.env.save
+
+data/*.db

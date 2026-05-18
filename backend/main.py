@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from database import create_tables, save_calendar_events, get_calendar_events, update_calendar_event, delete_calendar_event, save_todos, get_todos, update_todo, delete_todo
 
 from seed_knowledge import seed_knowledge_file
 from config import validate_config, IS_PRODUCTION, ENVIRONMENT
@@ -116,6 +117,9 @@ async def lifespan(app: FastAPI):
             print(f"🚀 [startup] WARNING: Could not seed marketing knowledge: {e}")
     else:
         print("🚀 [startup] Local mode — skipping knowledge seed (run seed_knowledge.py manually)")
+
+    # Step 2.5 — create database tables
+    await create_tables()
 
     # Step 3 — create agent
     agent_state["agent"] = create_music_agent()
@@ -316,3 +320,92 @@ async def get_transcript(video_id: str):
         word_count=result["word_count"],
         collection_name=f"video_{video_id}",
     )
+
+# ── Calendar Endpoints ─────────────────────────────────────────────────────────
+
+@app.post("/calendar/events")
+async def create_calendar_events(request: dict):
+    try:
+        session_id = request["session_id"]
+        video_id = request["video_id"]
+        events = request["events"]
+        saved = await save_calendar_events(session_id, video_id, events)
+        return {"saved": saved, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in POST /calendar/events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/calendar/events/{session_id}")
+async def read_calendar_events(session_id: str):
+    try:
+        events = await get_calendar_events(session_id)
+        return {"events": events}
+    except Exception as e:
+        print(f"❌ Error in GET /calendar/events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/calendar/events/{event_id}")
+async def edit_calendar_event(event_id: int, request: dict):
+    try:
+        updated = await update_calendar_event(event_id, request)
+        return {"updated": updated, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in PATCH /calendar/events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/calendar/events/{event_id}")
+async def remove_calendar_event(event_id: int):
+    try:
+        deleted = await delete_calendar_event(event_id)
+        return {"deleted": deleted, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in DELETE /calendar/events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Todo Endpoints ─────────────────────────────────────────────────────────────
+
+@app.post("/todos")
+async def create_todos(request: dict):
+    try:
+        session_id = request["session_id"]
+        video_id = request["video_id"]
+        items = request["items"]
+        saved = await save_todos(session_id, video_id, items)
+        return {"saved": saved, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in POST /todos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/todos/{session_id}")
+async def read_todos(session_id: str):
+    try:
+        items = await get_todos(session_id)
+        return {"items": items}
+    except Exception as e:
+        print(f"❌ Error in GET /todos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/todos/{todo_id}")
+async def edit_todo(todo_id: int, request: dict):
+    try:
+        updated = await update_todo(todo_id, request)
+        return {"updated": updated, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in PATCH /todos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/todos/{todo_id}")
+async def remove_todo(todo_id: int):
+    try:
+        deleted = await delete_todo(todo_id)
+        return {"deleted": deleted, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in DELETE /todos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
