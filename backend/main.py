@@ -20,6 +20,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from datetime import date
+import json
+from openai import AsyncOpenAI
 from database import create_tables, save_calendar_events, get_calendar_events, update_calendar_event, delete_calendar_event, save_todos, get_todos, update_todo, delete_todo
 
 from seed_knowledge import seed_knowledge_file
@@ -72,6 +75,8 @@ class ChatResponse(BaseModel):
     response: str
     tools_used: list[str]
     session_id: str
+    calendar_events: list[dict] = []
+    todo_items: list[dict] = []
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +252,68 @@ async def analyze_lyrics(request: AnalyzeLyricsRequest):
         status="success",
     )
 
+async def extract_tasks_from_response(response_text: str) -> dict:
+    """
+    Calls GPT-4o-mini to extract actionable tasks and dates from agent response.
+    Today's date is injected so all relative dates (next Friday, in 2 weeks)
+    are resolved to real YYYY-MM-DD values — no hallucination possible.
+    """
+    today = date.today().isoformat()
+    print(f"📅 Extracting tasks from agent response (today = {today})")
+
+    client = AsyncOpenAI()
+
+    prompt = f"""
+Today's date is {today}.
+
+Read the following music marketing assistant response and extract any actionable tasks or events that have a specific date or deadline.
+
+Rules:
+- Convert ALL relative dates ("next Friday", "in 2 weeks", "3 days before release") to exact YYYY-MM-DD dates based on today = {today}
+- If a task has a specific date → put it in calendar_events
+- If a task has no specific date → put it in todo_items with due_date as null
+- Never invent dates that are not implied by the text
+- Never return null for the arrays, always return empty arrays if nothing found
+- type must be one of: release, deadline, promo, general
+
+Return ONLY valid JSON, no markdown, no explanation:
+{{
+  "calendar_events": [
+    {{"title": "...", "date": "YYYY-MM-DD", "type": "release|deadline|promo|general"}}
+  ],
+  "todo_items": [
+    {{"title": "...", "due_date": "YYYY-MM-DD or null"}}
+  ]
+}}
+
+Agent response to analyze:
+{response_text}
+"""
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+        )
+        raw = response.choices[0].message.content.strip()
+        print(f"   Raw extraction: {raw[:200]}")
+
+        # Strip markdown fences if model adds them anyway
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+
+        parsed = json.loads(raw)
+        calendar_events = parsed.get("calendar_events", [])
+        todo_items = parsed.get("todo_items", [])
+        print(f"   ✅ Extracted {len(calendar_events)} calendar events, {len(todo_items)} todos")
+        return {"calendar_events": calendar_events, "todo_items": todo_items}
+
+    except Exception as e:
+        print(f"   ⚠️ Task extraction failed (non-fatal): {e}")
+        return {"calendar_events": [], "todo_items": []}
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
@@ -283,10 +350,14 @@ async def chat(request: ChatRequest):
             video_channel=request.video_channel,
         )
 
+        tasks = await extract_tasks_from_response(result["response"])
+
         return ChatResponse(
             response=result["response"],
             tools_used=result["tools_used"],
             session_id=result["session_id"],
+            calendar_events=tasks["calendar_events"],
+            todo_items=tasks["todo_items"],
         )
 
     except Exception as e:
