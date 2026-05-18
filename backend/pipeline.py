@@ -7,13 +7,12 @@
 #                        them as vectors in ChromaDB
 #
 # Transcript strategy (in order):
-#   1. YouTube Data API v3  — official Google API, never blocked
-#   2. youtube-transcript-api — fast fallback for most videos
-#   3. yt-dlp + AssemblyAI  — audio transcription for videos with no captions
+#   1. Supadata API         — works from any server, never blocked
+#   2. YouTube Data API v3  — official Google API fallback
+#   3. youtube-transcript-api — direct fallback
+#   4. yt-dlp + AssemblyAI  — audio transcription last resort
 #
 # These two functions are called by POST /analyze in main.py.
-# The ChromaDB collections they create are later searched
-# by the agent's search_transcript tool.
 # -------------------------------------------------------
 
 import os
@@ -43,11 +42,29 @@ YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 
 # -------------------------------------------------------
+# SINGLETON CHROMA CLIENT
+# Creates one ChromaDB client and reuses it across all requests.
+# Prevents "collection already exists" conflicts.
+# -------------------------------------------------------
+_chroma_client = None
+
+def get_chroma_client():
+    global _chroma_client
+    if _chroma_client is None:
+        _chroma_client = (
+            chromadb.EphemeralClient()
+            if IS_PRODUCTION
+            else chromadb.PersistentClient(path=CHROMA_DB_PATH)
+        )
+    return _chroma_client
+
+
+# -------------------------------------------------------
 # HELPER — count tokens in a text string
 # -------------------------------------------------------
 def count_tokens(text: str, model: str = "text-embedding-3-small") -> int:
     try:
-        encoding = tiktoken.encoding_for_model(model)
+        encoding = tiktoken.get_encoding("cl100k_base")
         tokens = encoding.encode(text)
         print(f"[TOKEN COUNT] {len(tokens)} tokens")
         return len(tokens)
@@ -81,15 +98,14 @@ def extract_video_id(youtube_url: str) -> str:
 
 
 # -------------------------------------------------------
-# HELPER — fetch video metadata using YouTube Data API v3
-# Falls back to yt-dlp if API key not set
+# HELPER — fetch video metadata
+# Uses YouTube Data API v3 if key is set, falls back to yt-dlp
 # -------------------------------------------------------
 def fetch_video_metadata(video_id: str) -> dict:
     print(f"[pipeline] Fetching metadata for video ID: {video_id}")
-
     api_key = os.getenv("YOUTUBE_API_KEY")
 
-    # --- Try YouTube Data API v3 first ---
+    # Try YouTube Data API v3 first
     if api_key:
         try:
             url = f"{YOUTUBE_API_BASE}/videos?part=snippet,contentDetails&id={video_id}&key={api_key}"
@@ -99,16 +115,14 @@ def fetch_video_metadata(video_id: str) -> dict:
             if items:
                 snippet = items[0]["snippet"]
                 duration_iso = items[0]["contentDetails"]["duration"]
-                # Parse ISO 8601 duration (PT3M33S → 213 seconds)
                 duration_match = re.search(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", duration_iso)
                 hours = int(duration_match.group(1) or 0)
                 minutes = int(duration_match.group(2) or 0)
                 seconds = int(duration_match.group(3) or 0)
-                duration = hours * 3600 + minutes * 60 + seconds
                 metadata = {
                     "title": snippet.get("title", "Unknown Title"),
                     "channel": snippet.get("channelTitle", "Unknown Channel"),
-                    "duration": duration,
+                    "duration": hours * 3600 + minutes * 60 + seconds,
                     "language": snippet.get("defaultAudioLanguage") or snippet.get("defaultLanguage") or None,
                 }
                 print(f"[pipeline] Metadata fetched via YouTube API: {metadata['title']} by {metadata['channel']}")
@@ -116,7 +130,7 @@ def fetch_video_metadata(video_id: str) -> dict:
         except Exception as e:
             print(f"[pipeline] YouTube API metadata failed: {e}, trying yt-dlp...")
 
-    # --- Fall back to yt-dlp ---
+    # Fall back to yt-dlp
     try:
         url = f"https://www.youtube.com/watch?v={video_id}"
         ydl_opts = {"quiet": True, "skip_download": True, "no_warnings": True}
@@ -137,21 +151,15 @@ def fetch_video_metadata(video_id: str) -> dict:
 
 # -------------------------------------------------------
 # HELPER — fetch captions via YouTube Data API v3
-#
-# Uses the official Google API — never blocked on any server.
-# Requires YOUTUBE_API_KEY environment variable.
-# Returns transcript text or None if captions not available.
+# Returns transcript text or None
 # -------------------------------------------------------
 def fetch_transcript_youtube_api(video_id: str) -> str | None:
     api_key = os.getenv("YOUTUBE_API_KEY")
     if not api_key:
-        print(f"[pipeline] YOUTUBE_API_KEY not set, skipping YouTube API")
         return None
 
     print(f"[pipeline] Attempting YouTube Data API v3...")
-
     try:
-        # Step 1: list available caption tracks
         captions_url = f"{YOUTUBE_API_BASE}/captions?part=snippet&videoId={video_id}&key={api_key}"
         response = httpx.get(captions_url, timeout=10)
         data = response.json()
@@ -167,12 +175,11 @@ def fetch_transcript_youtube_api(video_id: str) -> str | None:
 
         print(f"[pipeline] Found {len(items)} caption track(s)")
 
-        # Step 2: pick best caption track
-        # Priority: English auto-generated > any auto-generated > English manual > any manual
+        # Pick best caption track
         caption_id = None
         caption_lang = None
 
-        # First pass: English auto-generated
+        # First: English auto-generated
         for item in items:
             lang = item["snippet"]["language"]
             track_kind = item["snippet"]["trackKind"]
@@ -181,23 +188,21 @@ def fetch_transcript_youtube_api(video_id: str) -> str | None:
                 caption_lang = lang
                 break
 
-        # Second pass: any auto-generated
+        # Second: any auto-generated
         if not caption_id:
             for item in items:
-                track_kind = item["snippet"]["trackKind"]
-                if track_kind == "asr":
+                if item["snippet"]["trackKind"] == "asr":
                     caption_id = item["id"]
                     caption_lang = item["snippet"]["language"]
                     break
 
-        # Third pass: any manual caption
+        # Third: any manual
         if not caption_id:
             caption_id = items[0]["id"]
             caption_lang = items[0]["snippet"]["language"]
 
-        print(f"[pipeline] Using caption track: {caption_lang} (id: {caption_id})")
+        print(f"[pipeline] Using caption track: {caption_lang}")
 
-        # Step 3: download caption track as SBV format
         caption_url = f"{YOUTUBE_API_BASE}/captions/{caption_id}?tfmt=sbv&key={api_key}"
         caption_response = httpx.get(caption_url, timeout=15)
 
@@ -206,9 +211,6 @@ def fetch_transcript_youtube_api(video_id: str) -> str | None:
             return None
 
         raw = caption_response.text
-
-        # Step 4: strip SBV timestamps and clean text
-        # SBV format: timestamp line like "0:00:01.000,0:00:03.500" followed by text
         lines = []
         for line in raw.splitlines():
             line = line.strip()
@@ -219,9 +221,7 @@ def fetch_transcript_youtube_api(video_id: str) -> str | None:
             lines.append(line)
 
         transcript_text = " ".join(lines).strip()
-
         if not transcript_text:
-            print(f"[pipeline] Caption track was empty after cleaning")
             return None
 
         print(f"[pipeline] ✅ Transcript fetched via YouTube Data API v3")
@@ -236,10 +236,11 @@ def fetch_transcript_youtube_api(video_id: str) -> str | None:
 # -------------------------------------------------------
 # FUNCTION 1 — fetch_transcript(youtube_url)
 #
-# Tries 3 methods in order:
-#   1. YouTube Data API v3        — official, never blocked
-#   2. youtube-transcript-api     — fast, works for most videos
-#   3. yt-dlp + AssemblyAI        — audio transcription fallback
+# Tries 4 methods in order:
+#   1. Supadata API           — works from any server, never blocked
+#   2. YouTube Data API v3    — official Google API
+#   3. youtube-transcript-api — direct caption fetch
+#   4. yt-dlp + AssemblyAI   — audio transcription last resort
 # -------------------------------------------------------
 def fetch_transcript(youtube_url: str) -> dict:
     print(f"\n[pipeline] ── Starting fetch_transcript ──")
@@ -251,13 +252,13 @@ def fetch_transcript(youtube_url: str) -> dict:
     transcript_text = None
     source = None
 
-    # --- Attempt 1: Supadata API (works from any server, never blocked) ---
+    # --- Attempt 1: Supadata API ---
     try:
         supadata_key = os.getenv("SUPADATA_API_KEY")
         if supadata_key:
             print(f"[pipeline] Attempting Supadata API...")
             response = httpx.get(
-                f"https://api.supadata.ai/v1/youtube/transcript",
+                "https://api.supadata.ai/v1/youtube/transcript",
                 params={"videoId": video_id, "text": "true"},
                 headers={"x-api-key": supadata_key},
                 timeout=30,
@@ -273,13 +274,13 @@ def fetch_transcript(youtube_url: str) -> dict:
         print(f"[pipeline] Supadata failed: {e}")
 
     # --- Attempt 2: YouTube Data API v3 ---
-    if transcript_text is None:
+    if not transcript_text:
         transcript_text = fetch_transcript_youtube_api(video_id)
         if transcript_text:
             source = "youtube_data_api"
 
-    # --- Attempt 2: youtube-transcript-api ---
-    if transcript_text is None:
+    # --- Attempt 3: youtube-transcript-api ---
+    if not transcript_text:
         print(f"[pipeline] Attempting youtube-transcript-api...")
         try:
             from youtube_transcript_api.proxies import WebshareProxyConfig
@@ -312,16 +313,13 @@ def fetch_transcript(youtube_url: str) -> dict:
             print(f"[pipeline] No transcript found, falling back to AssemblyAI...")
         except Exception as e:
             print(f"[pipeline] youtube-transcript-api failed: {type(e).__name__}: {e}")
-            print(f"[pipeline] Falling back to yt-dlp + AssemblyAI...")
 
-    # --- Attempt 3: yt-dlp + AssemblyAI ---
-    if transcript_text is None:
+    # --- Attempt 4: yt-dlp + AssemblyAI ---
+    if not transcript_text:
         try:
             print(f"[pipeline] Downloading audio with yt-dlp...")
-
             with tempfile.TemporaryDirectory() as tmp_dir:
                 audio_path = os.path.join(tmp_dir, "audio.mp3")
-
                 ydl_opts = {
                     "format": "bestaudio/best",
                     "outtmpl": os.path.join(tmp_dir, "audio"),
@@ -333,14 +331,10 @@ def fetch_transcript(youtube_url: str) -> dict:
                         "preferredquality": "128",
                     }],
                 }
-
-                url = f"https://www.youtube.com/watch?v={video_id}"
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([url])
+                    ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
 
                 print(f"[pipeline] Audio downloaded. Sending to AssemblyAI...")
-                print(f"[pipeline] AssemblyAI will auto-detect the language...")
-
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 config = aai.TranscriptionConfig(
                     language_detection=True,
@@ -353,10 +347,8 @@ def fetch_transcript(youtube_url: str) -> dict:
                     raise RuntimeError(f"AssemblyAI error: {aai_transcript.error}")
 
                 transcript_text = aai_transcript.text.strip()
-                detected_language = getattr(aai_transcript, 'language_code', 'unknown')
                 source = "assemblyai"
                 print(f"[pipeline] ✅ Transcript fetched via AssemblyAI")
-                print(f"[pipeline] Detected language: {detected_language}")
                 print(f"[pipeline] Word count: {len(transcript_text.split())}")
 
         except Exception as e:
@@ -381,11 +373,6 @@ def fetch_transcript(youtube_url: str) -> dict:
 
 # -------------------------------------------------------
 # FUNCTION 2 — chunk_and_embed(video_id, transcript_text)
-#
-# Takes the raw transcript text and:
-# 1. Splits it into overlapping chunks (500 chars, 50 overlap)
-# 2. Converts each chunk into an embedding vector via OpenAI
-# 3. Stores everything in ChromaDB under collection "video_{video_id}"
 # -------------------------------------------------------
 def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
     print(f"\n[pipeline] ── Starting chunk_and_embed ──")
@@ -404,9 +391,6 @@ def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
     chunks = splitter.split_text(transcript_text)
     print(f"[pipeline] Created {len(chunks)} chunks")
 
-    avg_tokens = sum(count_tokens(c) for c in chunks) // len(chunks)
-    print(f"[pipeline] Average chunk size: {avg_tokens} tokens")
-
     print(f"[pipeline] Initialising OpenAI embeddings (text-embedding-3-small)...")
     embeddings = OpenAIEmbeddings(
         model="text-embedding-3-small",
@@ -415,8 +399,8 @@ def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
 
     print(f"[pipeline] Connecting to ChromaDB...")
     collection_name = f"video_{video_id}"
+    chroma_client = get_chroma_client()
 
-    chroma_client = chromadb.EphemeralClient() if IS_PRODUCTION else chromadb.PersistentClient(path=CHROMA_DB_PATH)
     existing_collections = [c.name for c in chroma_client.list_collections()]
     if collection_name in existing_collections:
         print(f"[pipeline] Collection '{collection_name}' already exists — deleting and recreating...")
@@ -453,18 +437,14 @@ def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
 
 # -------------------------------------------------------
 # HELPER — get_transcript_from_chroma(video_id)
-#
-# Reads all chunks back from ChromaDB and reassembles them.
-# Used by the agent's extract_lyrics tool.
-# Returns None if the video has not been analyzed yet.
 # -------------------------------------------------------
 def get_transcript_from_chroma(video_id: str) -> dict | None:
     collection_name = f"video_{video_id}"
     print(f"[get_transcript_from_chroma] Looking up: {collection_name}")
 
     try:
-        client = chromadb.EphemeralClient() if IS_PRODUCTION else chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        collection = client.get_collection(name=collection_name)
+        chroma_client = get_chroma_client()
+        collection = chroma_client.get_collection(name=collection_name)
         results = collection.get(include=["documents"])
 
         if not results["documents"]:
