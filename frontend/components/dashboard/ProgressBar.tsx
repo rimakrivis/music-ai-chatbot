@@ -1,6 +1,12 @@
 "use client";
 
-import { Plus } from "lucide-react";
+// Inline Plus Icon
+const PlusIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <line x1="12" x2="12" y1="5" y2="19"/>
+    <line x1="5" x2="19" y1="12" y2="12"/>
+  </svg>
+);
 
 interface ProgressBarProps {
   progress: number;
@@ -25,7 +31,7 @@ export default function ProgressBar({ progress }: ProgressBarProps) {
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-slate-800 font-semibold text-base">Progress Bar</h3>
         <button className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
-          <Plus size={18} />
+          <PlusIcon />
         </button>
       </div>
 

@@ -1,12 +1,32 @@
 "use client";
 
-import { Music, ChevronRight, Bookmark } from "lucide-react";
 import { CalendarEvent, EVENT_COLORS } from "@/lib/types";
 
 interface DailyFeedProps {
   events: CalendarEvent[];
   onEventClick: (event: CalendarEvent) => void;
 }
+
+// Inline SVG Icons
+const MusicIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <path d="M9 18V5l12-2v13"/>
+    <circle cx="6" cy="18" r="3"/>
+    <circle cx="18" cy="16" r="3"/>
+  </svg>
+);
+
+const ChevronRightIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <path d="m9 18 6-6-6-6"/>
+  </svg>
+);
+
+const BookmarkIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
+    <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>
+  </svg>
+);
 
 // Group events by date
 function groupEventsByDate(events: CalendarEvent[]) {
@@ -30,7 +50,7 @@ function formatDayInfo(dateStr: string) {
 function getEventIcon(type: string) {
   switch (type) {
     case "release":
-      return <Music size={18} />;
+      return <MusicIcon />;
     case "spotify":
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
@@ -134,13 +154,15 @@ export default function DailyFeed({ events, onEventClick }: DailyFeedProps) {
                                   <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
                                 </svg>
                               </span>
-                              <Bookmark size={14} className="text-slate-400" />
+                              <BookmarkIcon />
                               <span className="text-xs text-slate-600">Save Conversation</span>
                             </div>
                           )}
                         </div>
                       </div>
-                      <ChevronRight size={18} className="text-slate-400 group-hover:text-slate-600 transition-colors mt-1 shrink-0" />
+                      <span className="text-slate-400 group-hover:text-slate-600 transition-colors mt-1 shrink-0">
+                        <ChevronRightIcon />
+                      </span>
                     </button>
                   );
                 })}

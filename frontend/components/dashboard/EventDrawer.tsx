@@ -1,8 +1,28 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { X, Send, Bookmark } from "lucide-react";
 import { CalendarEvent, EVENT_COLORS, ChatMessage } from "@/lib/types";
+
+// Inline SVG Icons
+const XIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5">
+    <path d="M18 6 6 18"/>
+    <path d="m6 6 12 12"/>
+  </svg>
+);
+
+const SendIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <path d="m22 2-7 20-4-9-9-4Z"/>
+    <path d="M22 2 11 13"/>
+  </svg>
+);
+
+const BookmarkIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>
+  </svg>
+);
 
 interface EventDrawerProps {
   event: CalendarEvent | null;
@@ -103,7 +123,7 @@ export default function EventDrawer({ event, onClose }: EventDrawerProps) {
               onClick={onClose}
               className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/50 text-slate-500 hover:text-slate-700 transition-colors shrink-0"
             >
-              <X size={20} />
+              <XIcon />
             </button>
           </div>
         </div>
@@ -144,7 +164,7 @@ export default function EventDrawer({ event, onClose }: EventDrawerProps) {
         {/* Save button */}
         <div className="px-5 py-2 border-t border-slate-100">
           <button className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-medium text-slate-600 hover:text-slate-800 hover:bg-slate-50 rounded-xl transition-colors">
-            <Bookmark size={16} />
+            <BookmarkIcon />
             Save Conversation
           </button>
         </div>
@@ -165,7 +185,7 @@ export default function EventDrawer({ event, onClose }: EventDrawerProps) {
               disabled={!input.trim() || loading}
               className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-300 rounded-lg flex items-center justify-center text-white transition-colors"
             >
-              <Send size={16} />
+              <SendIcon />
             </button>
           </div>
         </div>
