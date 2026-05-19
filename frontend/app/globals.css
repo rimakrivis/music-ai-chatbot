@@ -2,17 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Smooth scrollbar for dark theme */
+:root {
+  --background: 45 20% 96%;
+  --foreground: 220 20% 15%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 20% 15%;
+  --primary: 250 50% 60%;
+  --primary-foreground: 0 0% 100%;
+  --muted: 220 15% 92%;
+  --muted-foreground: 220 10% 50%;
+  --accent: 45 25% 94%;
+  --accent-foreground: 220 20% 15%;
+  --border: 220 15% 90%;
+  --ring: 250 50% 60%;
+  --radius: 1rem;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+/* Smooth scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #09090b;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: hsl(220 15% 85%);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: hsl(220 15% 75%);
 }
