@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
+import { v4 as uuidv4 } from "uuid";
 import MiniCalendar from "@/components/dashboard/MiniCalendar";
 import TodoListPanel from "@/components/dashboard/TodoListPanel";
 import ProgressBar from "@/components/dashboard/ProgressBar";
@@ -9,72 +10,45 @@ import UploadPanel from "@/components/dashboard/UploadPanel";
 import AIChatbot from "@/components/dashboard/AIChatbot";
 import EventDrawer from "@/components/dashboard/EventDrawer";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
+import { sendMessage, AnalyzeResponse } from "@/lib/api";
 
-// Sample data
-const SAMPLE_EVENTS: CalendarEvent[] = [
-  {
-    id: 1,
-    title: "ALBUM RELEASE: 'Dreamscape' [23 May]",
-    description: "Release details: January 23, 2025\nRelease Time: 10:00 - 5:00pm",
-    date: "2025-05-22",
-    type: "release",
-  },
-  {
-    id: 2,
-    title: "Playlisting Pitch: 'Dreamscape' [23 May 10:00]",
-    date: "2025-05-22",
-    type: "spotify",
-  },
-  {
-    id: 3,
-    title: "Teaser Posts: Instagram & TikTok [22 May]",
-    date: "2025-05-23",
-    type: "social_media",
-  },
-  {
-    id: 4,
-    title: "Press Interview: 'New Artist Spotlight' [23 May 14:00]",
-    date: "2025-05-23",
-    type: "promo",
-  },
-  {
-    id: 5,
-    title: "Artwork Finalization [22 May 18:00]",
-    date: "2025-05-24",
-    type: "deadline",
-  },
-  {
-    id: 6,
-    title: "Team Sync Meeting [22 May 11:00]",
-    date: "2025-05-24",
-    type: "general",
-  },
-];
-
-const SAMPLE_TODOS: TodoItem[] = [
-  { id: 1, title: "Upload YouTube video", completed: false },
-  { id: 2, title: "Check Spotify stats", completed: false },
-  { id: 3, title: "Schedule Instagram posts", completed: false },
-  { id: 4, title: "Finalize artwork", completed: false },
-];
-
-const CALENDAR_DOT_DATES = [
-  { date: 12, color: "blue" },
-  { date: 16, color: "yellow" },
-  { date: 19, color: "green" },
-  { date: 22, color: "purple" },
-];
+// Stable session ID for this browser session
+const SESSION_ID = typeof window !== "undefined"
+  ? (localStorage.getItem("session_id") ?? (() => {
+      const id = uuidv4();
+      localStorage.setItem("session_id", id);
+      return id;
+    })())
+  : uuidv4();
 
 export default function DashboardPage() {
-  const [events] = useState<CalendarEvent[]>(SAMPLE_EVENTS);
-  const [todos, setTodos] = useState<TodoItem[]>(SAMPLE_TODOS);
+  const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(null);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "Hi, that's one context...since micrommency music release, the release with avsphnment to discuss and form a mesting some that iwrantive and AI's product.",
+      content: "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
     },
   ]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
+
+  // Called when UploadPanel successfully analyzes a video
+  const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
+    console.log("[page] Video loaded:", video.title);
+    setVideoInfo(video);
+    // Reset chat with a welcome message for this song
+    setChatMessages([
+      {
+        role: "assistant",
+        content: `✅ Loaded **"${video.title}"** by ${video.channel}. I've indexed the transcript (${video.word_count} words). Ask me anything — lyrics, marketing plan, release timing, or Spotify stats!`,
+      },
+    ]);
+    // Clear previous events/todos from last song
+    setEvents([]);
+    setTodos([]);
+  }, []);
 
   const handleToggleTodo = (id: number) => {
     setTodos((prev) =>
@@ -93,39 +67,126 @@ export default function DashboardPage() {
     setSelectedEvent(null);
   };
 
-  const handleSendMessage = (message: string) => {
+  const handleSendMessage = async (message: string) => {
+    if (!videoInfo) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "user", content: message },
+        { role: "assistant", content: "Please load a YouTube song first using the panel above." },
+      ]);
+      return;
+    }
+
+    // Add user message immediately
     setChatMessages((prev) => [...prev, { role: "user", content: message }]);
-    // Simulate AI response
-    setTimeout(() => {
+    setIsChatLoading(true);
+    console.log("[page] Sending message to agent:", message);
+
+    try {
+      const data = await sendMessage(
+        videoInfo.video_id,
+        message,
+        SESSION_ID,
+        videoInfo.title,
+        videoInfo.channel
+      );
+
+      console.log("[page] Agent response received:", {
+        response_length: data.response.length,
+        tools_used: data.tools_used,
+        calendar_events: data.calendar_events?.length ?? 0,
+        todo_items: data.todo_items?.length ?? 0,
+      });
+
+      // Add assistant response
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: data.response },
+      ]);
+
+      // Append any new calendar events returned by the agent
+      if (data.calendar_events && data.calendar_events.length > 0) {
+        const newEvents: CalendarEvent[] = data.calendar_events.map((e, i) => ({
+          id: Date.now() + i,
+          title: e.title,
+          date: e.date,
+          type: (e.type as CalendarEvent["type"]) || "general",
+        }));
+        console.log("[page] Adding", newEvents.length, "calendar events");
+        setEvents((prev) => [...prev, ...newEvents]);
+      }
+
+      // Append any new todos returned by the agent
+      if (data.todo_items && data.todo_items.length > 0) {
+        const newTodos: TodoItem[] = data.todo_items.map((t, i) => ({
+          id: Date.now() + i + 1000,
+          title: t.title,
+          completed: false,
+        }));
+        console.log("[page] Adding", newTodos.length, "todos");
+        setTodos((prev) => [...prev, ...newTodos]);
+      }
+
+    } catch (err) {
+      console.error("[page] Chat error:", err);
       setChatMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "I can help you with your music release planning. What specific aspect would you like to discuss?",
+          content: "Sorry, something went wrong connecting to the AI. Please try again.",
         },
       ]);
-    }, 1000);
+    } finally {
+      setIsChatLoading(false);
+    }
   };
+
+  // Build dot dates for MiniCalendar from real events
+  const calendarDotDates = events.map((e) => {
+    const day = parseInt(e.date.split("-")[2], 10);
+    const colorMap: Record<string, string> = {
+      release: "purple",
+      spotify: "green",
+      youtube: "red",
+      social_media: "blue",
+      promo: "orange",
+      deadline: "rose",
+      general: "slate",
+    };
+    return { date: day, color: colorMap[e.type] ?? "slate" };
+  });
 
   return (
     <div className="min-h-screen bg-[#f7f5f2] p-6">
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-6 h-[calc(100vh-48px)]">
+
         {/* Left Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <MiniCalendar dotDates={CALENDAR_DOT_DATES} />
+          <MiniCalendar dotDates={calendarDotDates} />
           <TodoListPanel todos={todos} onToggle={handleToggleTodo} />
           <ProgressBar progress={progressPercent} />
         </aside>
 
         {/* Center Feed */}
         <main className="overflow-y-auto pr-2 -mr-2">
-          <DailyFeed events={events} onEventClick={handleEventClick} />
+          {events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
+              <span className="text-5xl">🎵</span>
+              <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
+            </div>
+          ) : (
+            <DailyFeed events={events} onEventClick={handleEventClick} />
+          )}
         </main>
 
         {/* Right Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <UploadPanel />
-          <AIChatbot messages={chatMessages} onSendMessage={handleSendMessage} />
+          <UploadPanel onVideoLoaded={handleVideoLoaded} />
+          <AIChatbot
+            messages={chatMessages}
+            onSendMessage={handleSendMessage}
+            isLoading={isChatLoading}
+          />
         </aside>
       </div>
 
