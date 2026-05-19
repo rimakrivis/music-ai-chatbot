@@ -17,6 +17,8 @@ export interface ChatResponse {
   response: string;
   tools_used: string[];
   session_id: string;
+  calendar_events?: { title: string; date: string; type: string }[];
+  todo_items?: { title: string; due_date: string | null }[];
 }
 
 export interface TranscriptResponse {
