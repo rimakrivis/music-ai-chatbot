@@ -6,6 +6,7 @@ import { ChatMessage } from "@/lib/types";
 interface AIChatbotProps {
   messages: ChatMessage[];
   onSendMessage: (message: string) => void;
+  isLoading?: boolean;
 }
 
 // Inline SVG icon
@@ -16,7 +17,7 @@ const SendIcon = () => (
   </svg>
 );
 
-export default function AIChatbot({ messages, onSendMessage }: AIChatbotProps) {
+export default function AIChatbot({ messages, onSendMessage, isLoading = false }: AIChatbotProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
