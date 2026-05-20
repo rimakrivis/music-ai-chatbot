@@ -120,3 +120,4 @@ spotipy
 pinecone==7.3.0
 langchain-pinecone==0.2.13
 aiosqlite
+supabase

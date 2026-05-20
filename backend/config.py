@@ -22,6 +22,11 @@ SPOTIFY_CLIENT_SECRET: str = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 # --- AssemblyAI ---
 ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
 
+# --- Supabase ---
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+
+
 # --- LangSmith ---
 LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
 LANGSMITH_API_KEY: str = os.getenv("LANGSMITH_API_KEY", LANGCHAIN_API_KEY)
@@ -46,6 +51,8 @@ def validate_config() -> None:
         "SPOTIFY_CLIENT_ID": SPOTIFY_CLIENT_ID,
         "SPOTIFY_CLIENT_SECRET": SPOTIFY_CLIENT_SECRET,
         "ASSEMBLYAI_API_KEY": ASSEMBLYAI_API_KEY,
+        "SUPABASE_URL": SUPABASE_URL,
+        "SUPABASE_ANON_KEY": SUPABASE_ANON_KEY,
     }
 
     missing = [name for name, value in required.items() if not value]
