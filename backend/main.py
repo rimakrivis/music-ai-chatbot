@@ -17,7 +17,7 @@ Startup behaviour:
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import date
@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
             from seed_knowledge import seed_knowledge_file
             seed_knowledge_file(
                 filename="marketing_knowledge.md",
-                collection_name="marketing_knowledge",
+                namespace="marketing_knowledge",
             )
             print("🚀 [startup] Marketing knowledge seeded ✓")
         except Exception as e:
@@ -391,6 +391,93 @@ async def get_transcript(video_id: str):
         word_count=result["word_count"],
         collection_name=f"video_{video_id}",
     )
+
+@app.post("/analyze-audio")
+async def analyze_audio(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+    title: str = Form("Unknown Audio"),
+    artist: str = Form("Unknown Artist")
+):
+    """
+    Accepts an MP3 or WAV file, sends it to AssemblyAI for transcription,
+    and embeds the resulting text into Pinecone.
+    """
+    print(f"\n📥 [/analyze-audio] File: {file.filename} | Session: {session_id}")
+
+    # 1. Validate file format
+    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    if ext not in ["mp3", "wav"]:
+        raise HTTPException(status_code=400, detail="Only MP3 and WAV files are supported.")
+
+    # 2. Read file bytes
+    try:
+        file_bytes = await file.read()
+        if len(file_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read audio file: {str(e)}")
+
+    # 3. Generate a stable internal ID based on session and filename
+    import hashlib
+    generated_video_id = hashlib.md5(f"{session_id}_{file.filename}".encode()).hexdigest()[:11]
+
+# 4. Call AssemblyAI transcription logic via Official SDK
+    try:
+        import assemblyai as aai
+        import os
+
+        aai_key = os.getenv("ASSEMBLYAI_API_KEY")
+        if not aai_key:
+            raise ValueError("ASSEMBLYAI_API_KEY is not set in environment variables.")
+
+        # Configure the official client
+        aai.settings.api_key = aai_key
+        transcriber = aai.Transcriber()
+
+        # Custom configuration aligned with the latest AssemblyAI SDK standards
+        config = aai.TranscriptionConfig(
+            language_detection=True,
+            speech_models=["universal-3-pro", "universal-2"]
+        )
+
+        print("   Uploading and transcribing file via AssemblyAI SDK...")
+        # The SDK automatically handles reading bytes, uploading, and polling!
+        transcript = transcriber.transcribe(file_bytes, config=config)
+
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(f"AssemblyAI error: {transcript.error}")
+
+        transcript_text = transcript.text
+        word_count = len(transcript_text.split())
+        print(f"   Audio transcribed successfully: {word_count} words")
+
+    except Exception as e:
+        print(f"   ❌ AssemblyAI transcription failed: {str(e)}")
+        raise HTTPException(status_code=422, detail=f"Transcription failed: {str(e)}")
+
+    # 5. Chunk and embed the resulting transcript into Pinecone
+    try:
+        embed_data = chunk_and_embed(
+            video_id=generated_video_id,
+            transcript_text=transcript_text,
+            session_id=session_id
+        )
+        print(f"   Embedded audio transcript: {embed_data.get('chunks_created', 0)} chunks")
+    except Exception as e:
+        print(f"   ❌ Embedding failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
+
+    return {
+        "video_id": generated_video_id,
+        "transcript_text": transcript_text,
+        "word_count": word_count,
+        "title": title,
+        "artist": artist,
+        "channel": artist,
+        "chunks_created": embed_data.get("chunks_created", 0),
+        "status": "success"
+    }
 
 # ── Calendar Endpoints ─────────────────────────────────────────────────────────
 

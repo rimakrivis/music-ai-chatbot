@@ -41,6 +41,33 @@ export default function WeeklyAgenda({
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
 
+  // Automatically focus the calendar week on the first available AI event
+  const [hasFocused, setHasFocused] = useState(false);
+  
+  if (events.length > 0 && !hasFocused) {
+    const firstEventDate = parseISO(events[0].date);
+    setCurrentWeek(firstEventDate);
+    setHasFocused(true);
+  }
+
+  // Automatically focus the calendar week on the first available AI event
+  const [hasFocused, setHasFocused] = useState(false);
+  
+  if (events.length > 0 && !hasFocused) {
+    const firstEventDate = parseISO(events[0].date);
+    setCurrentWeek(firstEventDate);
+    setHasFocused(true);
+  }
+
+  // Automatically focus the calendar week on the first available AI event
+  const [hasFocused, setHasFocused] = useState(false);
+  
+  if (events.length > 0 && !hasFocused) {
+    const firstEventDate = parseISO(events[0].date);
+    setCurrentWeek(firstEventDate);
+    setHasFocused(true);
+  }
+
   const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 }); // Monday
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 

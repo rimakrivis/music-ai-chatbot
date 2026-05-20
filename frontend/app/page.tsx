@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback,useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import MiniCalendar from "@/components/dashboard/MiniCalendar";
 import TodoListPanel from "@/components/dashboard/TodoListPanel";
@@ -13,15 +13,24 @@ import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
 import { sendMessage, AnalyzeResponse } from "@/lib/api";
 
 // Stable session ID for this browser session
+// Uses the exact same key as the chat page
 const SESSION_ID = typeof window !== "undefined"
-  ? (localStorage.getItem("session_id") ?? (() => {
-      const id = uuidv4();
-      localStorage.setItem("session_id", id);
-      return id;
-    })())
-  : uuidv4();
+  ? (localStorage.getItem("music_ai_session_id") ?? "")
+  : "";
 
 export default function DashboardPage() {
+  const [sessionId, setSessionId] = useState<string>("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      let id = localStorage.getItem("music_ai_session_id");
+      if (!id) {
+        id = uuidv4();
+        localStorage.setItem("music_ai_session_id", id);
+      }
+      setSessionId(id);
+    }
+  }, []);
   const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -86,7 +95,7 @@ export default function DashboardPage() {
       const data = await sendMessage(
         videoInfo.video_id,
         message,
-        SESSION_ID,
+        sessionId,
         videoInfo.title,
         videoInfo.channel
       );
@@ -181,7 +190,7 @@ export default function DashboardPage() {
 
         {/* Right Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <UploadPanel onVideoLoaded={handleVideoLoaded} />
+          <UploadPanel onVideoLoaded={handleVideoLoaded} sessionId={sessionId} />
           <AIChatbot
             messages={chatMessages}
             onSendMessage={handleSendMessage}

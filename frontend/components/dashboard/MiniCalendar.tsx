@@ -31,8 +31,8 @@ const ChevronRightIcon = () => (
 );
 
 export default function MiniCalendar({ dotDates = [] }: MiniCalendarProps) {
-  const [currentDate, setCurrentDate] = useState(new Date(2025, 4, 3)); // May 2025, day 3 selected
-  const [selectedDay, setSelectedDay] = useState(3);
+  const [currentDate, setCurrentDate] = useState(new Date()); // May 2025, day 3 selected
+  const [selectedDay, setSelectedDay] = useState(new Date().getDate());
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();

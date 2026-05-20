@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { analyzeVideo, AnalyzeResponse } from "@/lib/api";
+import { useRef, useState } from "react";
+import { analyzeVideo, analyzeAudioFile, AnalyzeResponse } from "@/lib/api";
 
 const LinkIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -23,34 +23,50 @@ const SpinnerIcon = () => (
 
 interface UploadPanelProps {
   onVideoLoaded: (video: AnalyzeResponse) => void;
+  sessionId: string; // Added to handle multi-session architecture
 }
 
-export default function UploadPanel({ onVideoLoaded }: UploadPanelProps) {
+export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelProps) {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [videoTitle, setVideoTitle] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAnalyze = async () => {
-    if (!url.trim()) return;
-
-    const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
-    if (!youtubeRegex.test(url.trim())) {
-      setErrorMsg("Please paste a valid YouTube URL");
-      setStatus("error");
-      return;
-    }
-
     setStatus("loading");
     setErrorMsg("");
-    console.log("[UploadPanel] Analyzing URL:", url);
 
     try {
-      const data = await analyzeVideo(url.trim());
-      console.log("[UploadPanel] Analysis complete:", data);
-      setVideoTitle(data.title);
-      setStatus("success");
-      onVideoLoaded(data);
+      if (selectedFile) {
+        console.log("[UploadPanel] Uploading file:", selectedFile.name);
+        const data = await analyzeAudioFile(
+          selectedFile, 
+          sessionId, 
+          selectedFile.name.replace(/\.[^/.]+$/, ""), 
+          "Unknown Artist"
+        );
+        setVideoTitle(data.title);
+        setStatus("success");
+        onVideoLoaded(data);
+      } else {
+        if (!url.trim()) {
+          setErrorMsg("Please paste a YouTube URL or choose an audio file");
+          setStatus("error");
+          return;
+        }
+        const youtubeRegex = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+        if (!youtubeRegex.test(url.trim())) {
+          setErrorMsg("Please paste a valid YouTube URL");
+          setStatus("error");
+          return;
+        }
+        const data = await analyzeVideo(url.trim());
+        setVideoTitle(data.title);
+        setStatus("success");
+        onVideoLoaded(data);
+      }
     } catch (err) {
       console.error("[UploadPanel] Error:", err);
       setErrorMsg(err instanceof Error ? err.message : "Something went wrong. Try again.");
@@ -64,6 +80,7 @@ export default function UploadPanel({ onVideoLoaded }: UploadPanelProps) {
 
   const handleReset = () => {
     setUrl("");
+    setSelectedFile(null);
     setStatus("idle");
     setErrorMsg("");
     setVideoTitle("");
@@ -105,7 +122,11 @@ export default function UploadPanel({ onVideoLoaded }: UploadPanelProps) {
               <input
                 type="text"
                 value={url}
-                onChange={(e) => { setUrl(e.target.value); if (status === "error") setStatus("idle"); }}
+                onChange={(e) => { 
+                  setUrl(e.target.value); 
+                  if (selectedFile) setSelectedFile(null); // Clear file if user types URL
+                  if (status === "error") setStatus("idle"); 
+                }}
                 onKeyDown={handleKeyDown}
                 placeholder="Paste YouTube URL here"
                 disabled={status === "loading"}
@@ -113,7 +134,7 @@ export default function UploadPanel({ onVideoLoaded }: UploadPanelProps) {
               />
               <button
                 onClick={handleAnalyze}
-                disabled={!url.trim() || status === "loading"}
+                disabled={(!url.trim() && !selectedFile) || status === "loading"}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 disabled:opacity-40 transition-colors"
               >
                 {status === "loading" ? <SpinnerIcon /> : <LinkIcon />}
@@ -126,7 +147,9 @@ export default function UploadPanel({ onVideoLoaded }: UploadPanelProps) {
                 <span className="inline-block w-1 h-1 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
                 <span className="inline-block w-1 h-1 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
                 <span className="inline-block w-1 h-1 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-                <span className="ml-1">Fetching transcript, this may take 30s...</span>
+                <span className="ml-1">
+                  {selectedFile ? "Uploading and transcribing audio..." : "Fetching transcript, this may take 30s..."}
+                </span>
               </p>
             )}
 
@@ -136,10 +159,46 @@ export default function UploadPanel({ onVideoLoaded }: UploadPanelProps) {
             )}
           </div>
 
+          {/* Audio File Upload */}
+          <div className="mb-4">
+            <p className="text-slate-600 text-sm font-medium mb-2">Or Upload Audio File</p>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept=".mp3,.wav"
+              disabled={status === "loading"}
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files && e.target.files[0]) {
+                  setSelectedFile(e.target.files[0]);
+                  setUrl(""); // Clear URL field if user selects file
+                  if (status === "error") setStatus("idle");
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={status === "loading"}
+              className="w-full bg-slate-50 border border-dashed border-slate-300 rounded-xl px-4 py-2.5 text-xs text-slate-600 hover:bg-slate-100/50 transition-colors truncate"
+            >
+              {selectedFile ? `🎵 Selected: ${selectedFile.name}` : "Choose MP3 or WAV file..."}
+            </button>
+            {selectedFile && (
+              <button
+                type="button"
+                onClick={() => setSelectedFile(null)}
+                className="text-rose-400 hover:text-rose-600 text-[10px] mt-1 block text-right w-full"
+              >
+                Clear file
+              </button>
+            )}
+          </div>
+
           {/* Analyze button */}
           <button
             onClick={handleAnalyze}
-            disabled={!url.trim() || status === "loading"}
+            disabled={(!url.trim() && !selectedFile) || status === "loading"}
             className="w-full bg-slate-800 hover:bg-slate-700 disabled:bg-slate-300 text-white text-sm font-medium py-2.5 rounded-xl transition-colors"
           >
             {status === "loading" ? "Analyzing..." : "Analyze Song"}

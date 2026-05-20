@@ -33,13 +33,17 @@ const TYPE_PILL: Record<string, string> = {
 };
 
 export default function CalendarPanel({ sessionId, refreshTrigger }: CalendarPanelProps) {
-  const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [currentMonth, setCurrentMonth] = useState<Date>(new Date());
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDay, setSelectedDay] = useState<Date | null>(new Date());
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editDate, setEditDate] = useState("");
+  useEffect(() => {
+  setCurrentMonth(new Date());
+}, []);
+
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 

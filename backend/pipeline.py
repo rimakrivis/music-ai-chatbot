@@ -393,7 +393,7 @@ def fetch_transcript(youtube_url: str) -> dict:
 # Splits transcript into chunks and stores in Pinecone
 # under namespace "video_{video_id}"
 # -------------------------------------------------------
-def chunk_and_embed(video_id: str, transcript_text: str) -> dict:
+def chunk_and_embed(video_id: str, transcript_text: str, session_id: str = None) -> dict:
     print(f"\n[pipeline] ── Starting chunk_and_embed ──")
     print(f"[pipeline] Video ID: {video_id}")
     print(f"[pipeline] Transcript length: {len(transcript_text)} characters")

@@ -44,16 +44,16 @@ function ChatPageInner() {
   const video_title = searchParams.get("title") || "Unknown Video";
   const video_channel = searchParams.get("channel") || "";
 
-  const [sessionId] = useState(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("music_ai_session_id");
-      if (stored) return stored;
-      const newId = crypto.randomUUID();
-      localStorage.setItem("music_ai_session_id", newId);
-      return newId;
+  const [sessionId, setSessionId] = useState<string>("");
+
+  useEffect(() => {
+    let stored = localStorage.getItem("music_ai_session_id");
+    if (!stored) {
+      stored = crypto.randomUUID();
+      localStorage.setItem("music_ai_session_id", stored);
     }
-    return crypto.randomUUID();
-  });
+    setSessionId(stored);
+  }, []);
 
   const [messages, setMessages] = useState<MessageWithTasks[]>([]);
   const [loading, setLoading] = useState(false);
@@ -129,6 +129,14 @@ function ChatPageInner() {
   function handleTaskDismiss(msgIndex: number) {
     setMessages((prev) =>
       prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
+    );
+  }
+
+  if (!sessionId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">
+        Loading session…
+      </div>
     );
   }
 

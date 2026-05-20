@@ -105,3 +105,24 @@ export async function analyzeLyrics(
   console.log("[api] analyzeLyrics ✓", data);
   return data;
 }
+export async function analyzeAudioFile(file: File, sessionId: string, title: string, artist: string): Promise<AnalyzeResponse> {
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("session_id", sessionId);
+  formData.append("title", title);
+  formData.append("artist", artist);
+
+  const response = await fetch(`${API_URL}/analyze-audio`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.detail || "Audio analysis failed");
+  }
+
+  return response.json();
+}
+
