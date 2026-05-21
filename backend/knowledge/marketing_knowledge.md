@@ -1,33 +1,6 @@
 # Music Marketing Knowledge Base
-# Source: DropOperator AI — Music Release Strategy System
-# Version: 1.0
-# Usage: Embed into ChromaDB collection "marketing_knowledge" using MarkdownHeaderTextSplitter
-# Each H2 section (##) becomes one retrievable chunk with its header as metadata
 
----
 
-## Agent Identity and Behavior Rules
-
-You are DropOperator AI — a professional music release manager and marketing strategist for independent artists and music managers at any level. Only answer music-related questions. If asked about anything else, politely redirect the user back to music topics.
-
-Always respond in the language the user writes in. Use a professional but warm tone — act as an expert manager and mentor. Never invent data, contacts, statistics, or quotes. If information is missing, ask for it before proceeding. Always end every response with ONE clear next action.
-
----
-
-## Staged Output System — How to Structure Responses
-
-Do NOT output everything at once. Always follow this order:
-
-STAGE 1 — Always deliver first, in this sequence:
-1. Song analysis
-2. Timeline reality check
-3. Full release timeline
-
-After Stage 1, stop and ask: "Which section would you like me to work on next?" and list the Stage 2 options: Press Release, Spotify Editorial Pitch, YouTube Description and Lyrics, Radio Submission Email, Social Media Plan, Social Media Profile Audit.
-
-STAGE 2 — Only generate a section when the user explicitly asks for it. Each section is a separate focused output. Never output all Stage 2 sections at once. This keeps the plan actionable and not overwhelming for the artist.
-
----
 
 ## Song Analysis — How to Analyze a Track
 
@@ -44,13 +17,8 @@ If a music video is provided, also identify:
 - Overall visual mood and aesthetic of the video
 - Any moment that has viral potential and why it would resonate
 
-STRICT RULE: Base analysis only on provided content. Never invent streaming statistics, chart positions, or listener counts.
-
----
-
 ## Timeline Reality Check — Minimum Days Required Before Release
 
-When an artist gives a release date, immediately calculate whether it is realistic. Use these minimum timelines:
 
 - Cover art creation: minimum 5 days
 - Distributor upload and platform confirmation: 3 to 7 days depending on distributor
@@ -63,13 +31,11 @@ When an artist gives a release date, immediately calculate whether it is realist
 - RECOMMENDED MINIMUM timeline that allows Spotify pitch: 28 days from today
 - WITH music video included: minimum 35 days from today
 
-If the release date is too soon, say clearly: "This timeline is too tight. I recommend [specific date] as a realistic release date because [reason]." Never proceed with an unrealistic plan without flagging this first and recommending a better date.
 
 ---
 
 ## Release Timeline Structure — Day by Day Plan
 
-Generate a structured day-by-day task list from today to 14 days after release. Format each task exactly as:
 
 [DATE] — [TASK] — [WHY IT MATTERS]
 
@@ -90,15 +56,151 @@ RELEASE DAY milestones:
 - Radio submission emails sent
 - First social media post published
 
-POST-RELEASE 14 DAY milestones:
-- Days 1 to 5: intensive social media posting plan
-- Day 7: check Spotify Save rate and stream numbers
-- Day 14: evaluate performance and plan next steps
+## Digital Distribution and Platform Ingestion
 
-DISTRIBUTOR RECOMMENDATION RULES:
-- Lithuanian artists: recommend Agata first (free, local support), DistroKid as second option
-- All other artists: recommend DistroKid (fastest) or TuneCore
-- Always remind artists: upload early, never wait until the last day before the deadline
+### Pre-Release Timelines and Processing Windows
+The absolute baseline for digital music distribution is a strict 4-week window.
+You must deliver final mixed audio and complete metadata to your distributor at least 28 days before the release date.
+This timeline is mandatory because Spotify requires a minimum of 3 to 4 weeks to ingest metadata.
+It is also the minimum processing window required to pitch via Spotify for Artists.
+Missing this 28-day window drops your track's chances for curated editorial playlists to zero.
+It also risks missing automated inclusion in follower Release Radar algorithms.
+
+### Distributor Internal Review Latency
+Different distribution platforms exhibit distinct processing latencies before delivering to DSP stores.
+DistroKid ingestion and metadata validation typically require 1 to 3 business days.
+TuneCore processing and storefront distribution require an internal review window of 3 to 5 business days.
+The AGATA distribution gateway requires a standard processing window of 3 to 5 business days.
+Uploading assets less than 14 days before release guarantees no Spotify editorial pitch capability.
+
+### Asset Continuity and Metadata Retention
+Every release requires a strict separation between product identifiers and recording identifiers.
+The Universal Product Code (UPC) belongs exclusively to the product bundle like an album or single.
+The International Standard Recording Code (ISRC) belongs to the specific sound recording file itself.
+If you release a single and later include that exact track inside an album, you must reuse the identical ISRC code.
+This retains the streaming counts, playlist placements, and historical algorithm weight across both AGATA and DSPs.
+
+### Metadata Compliance and Rejection Triggers
+Artist name spelling, casing, and special characters must precisely match across all past releases and social profiles.
+Featured artists must be input into the designated metadata slots, never appended directly to the song title string.
+Explicitly credit all songwriters, lyricists, and producers by their real legal names to ensure accurate publishing splits.
+Do not include website URLs, social media handles, price info, release dates, or barcodes on the artwork cover.
+
+---
+
+## Technical Specifications and Deliverables
+
+### Audio Format Requirements
+*   **Primary Master File:** Stereo WAV format, 24-bit depth, 44.1 kHz sample rate. This is the industry standard for digital distributors.
+*   **Alternative High-Res:** 24-bit / 96 kHz WAV files are accepted by Apple Music (Mastered for iTunes) and Amazon HD.
+*   **MP3 Restrictions:** Never upload MP3 or AAC files for commercial distribution. High compression destroys fidelity and causes DSP rejection.
+*   **Loudness Target:** Master targeted between -14 LUFS to -12 LUFS integrated. DSP normalization will compress anything louder, causing distortion.
+
+### Artwork Specifications
+*   **Dimensions:** Exactly 3000 x 3000 pixels. A perfect 1:1 square ratio is non-negotiable for all major platforms.
+*   **Format and Profile:** RGB color mode, minimum 72 DPI (300 DPI preferred), saved strictly as a flat JPEG or PNG file.
+*   **Text Matching:** Any text on the artwork must exactly match the artist name and track title entered in the metadata fields.
+
+---
+
+## Institutional Registrations & Rights Architecture
+
+### AGATA Integration Rules
+*   **Neighboring Rights Payouts:** AGATA collects neighboring rights (gretutinės teisės) for public performances, commercial playback, and radio airplay in Lithuania.
+*   **The Workflow Link:** Copy the exact ISRC codes generated by your digital distributor and immediately register them in the AGATA database.
+*   **The Consequence:** International distributors do not collect Lithuanian public venue performance fees. Unregistered ISRCs result in total royalty loss from local radio.
+
+### LATGA Registration Rules
+*   **Author and Composer Royalties:** LATGA collects mechanical and copyright royalties for the underlying composition, lyrics, and musical arrangement.
+*   **The Distribution Divide:** LATGA has nothing to do with your distributor. Registration must happen directly via the LATGA portal prior to release.
+*   **Publishing Admin Warning:** If your distributor offers "Publishing Administration" (e.g., DistroKid/TuneCore Publishing), skip it for the Baltic territory.
+*   **Territory Protection:** Keep your publishing registration local with LATGA to ensure swift collection of radio and live show performance cuts.
+
+---
+
+## Strategic Asset and Launch Milestones
+
+### Pre-Release Asset Milestones
+*   **W-6 (6 weeks out):** Final master delivered. Metadata asset locked. Artwork finalized to exact technical specs.
+*   **W-5 (Cover Art Approval):** Cover art briefing must start on Day 1 and be completely approved and finalized by Day 5.
+*   **W-4 (28 days out):** Strict distribution upload deadline to trigger ingestion across all global DSPs.
+*   **W-3 (21 days out):** Track populates in Spotify for Artists. Submit formal editorial pitch copy. Complete AGATA/LATGA registrations.
+*   **W-2 to W-1 (Video Window):** Upload official music video to YouTube as unlisted 2 to 3 days before release. Schedule privacy to shift to public on launch.
+
+### Launch Day Execution
+*   **00:00 Release Launch:** The song goes live across all digital streaming platforms (DSPs) automatically.
+*   **Press and Radio Dispatch:** Dispatch the final press release early in the morning on release day. Send structured radio submission emails.
+*   **Marketing Asset Activation:** Technical release is live. For creative social media ideas, asset generation, or copy variations, transfer the execution flow directly to the interactive event and task chat interface.
+
+### Post-Release 14 Day Analysis
+*   **Days 1 to 5:** Creative content execution phase. For specific short-form video concepts, trending hooks, or engagement strategies, brainstorm and generate tactical blueprints directly within the dedicated task chat window.
+*   **Day 7 (Data Validation):** Check Spotify for Artists to evaluate the initial track Save rate and total streaming numbers.
+*   **Day 14 (Performance Evaluation):** Analyze total platform performance metrics, review playlist additions, and map out next step marketing campaigns.
+
+## Technical Specifications and Deliverables
+
+### Audio Format Requirements
+*   **Primary Master File:** Stereo WAV format, 24-bit depth, 44.1 kHz sample rate. This is the industry standard for digital distributors.
+*   **Alternative High-Res:** 24-bit / 96 kHz WAV files are accepted by Apple Music (Mastered for iTunes) and Amazon HD.
+*   **MP3 Restrictions:** Never upload MP3 or AAC files for commercial distribution. High compression destroys fidelity and causes DSP rejection.
+*   **Loudness Target:** Master targeted between -14 LUFS to -12 LUFS integrated. DSP normalization will compress anything louder, causing distortion.
+
+### Artwork Specifications
+*   **Dimensions:** Exactly 3000 x 3000 pixels. A perfect 1:1 square ratio is non-negotiable for all major platforms.
+*   **Format and Profile:** RGB color mode, minimum 72 DPI (300 DPI preferred), saved strictly as a flat JPEG or PNG file.
+*   **Rejection Triggers:** Do not include website URLs, social media handles, price info, release dates, or barcodes on the artwork cover.
+*   **Text Matching:** Any text on the artwork must exactly match the artist name and track title entered in the metadata fields.
+
+---
+
+## Technical Metadata and Identifiers
+
+### ISRC vs UPC Management
+*   **ISRC (International Standard Recording Code):** The unique 12-character alphanumeric code identifying the specific sound recording.
+*   **UPC (Universal Product Code):** The 12 or 13-digit barcode identifying the product package (the single bundle or full album).
+*   **Track Continuity Rule:** If a single is later compiled into an album, you must reuse the exact same ISRC code.
+*   **Streaming Retention:** Reusing the ISRC merges historical streaming data, retaining playlist placements and algorithm weight across DSPs.
+
+### Metadata Compliance
+*   **Artist Name Consistency:** Spelling, casing, and special characters must precisely match across all past releases and social profiles.
+*   **Featured Artists:** Input featured artists in the designated metadata slots, not appended directly to the song title string.
+*   **Contributor Credits:** Explicitly credit all songwriters, lyricists, and producers by their real legal names to ensure accurate publishing splits.
+
+---
+
+## Institutional Registrations & Rights Architecture
+
+### AGATA Integration Rules
+*   **Neighboring Rights Payouts:** AGATA collects neighboring rights (gretutinės teisės) for public performances, commercial playback, and radio airplay in Lithuania.
+*   **The Workflow Link:** Copy the exact ISRC codes generated by your digital distributor and immediately register them in the AGATA database.
+*   **The Consequence:** International distributors do not collect Lithuanian public venue performance fees. Unregistered ISRCs result in total royalty loss from local radio.
+
+## Institutional Registrations & Rights Architecture (Lithuania Territory Only)
+
+### AGATA Integration Rules (Lithuania Territory Only)
+*   **Lithuania Neighboring Rights:** AGATA collects neighboring rights (gretutinės teisės) for public performances, commercial playback, and radio airplay strictly within the Lithuania territory.
+*   **Lithuania ISRC Workflow:** For releases in Lithuania, copy the exact ISRC codes generated by your digital distributor and immediately register them in the Lithuania AGATA database.
+*   **Lithuania Royalty Loss Consequence:** International distributors do not collect Lithuanian public venue performance fees. Unregistered ISRCs result in total royalty loss from local Lithuania radio markets.
+
+### LATGA Registration Rules (Lithuania Territory Only)
+*   **Lithuania Author and Composer Royalties:** LATGA collects mechanical and copyright royalties for the underlying composition, lyrics, and musical arrangement strictly within the Lithuania and Baltic territory.
+*   **Lithuania LATGA Distribution Divide:** For Lithuania releases, LATGA has nothing to do with your international distributor. Registration must happen directly via the Lithuania LATGA portal prior to release.
+*   **Lithuania Publishing Admin Warning:** If your distributor offers international "Publishing Administration" (e.g., DistroKid/TuneCore Publishing), you must skip or exclude it for the Lithuania and Baltic territory.
+*   **Lithuania Territory Protection:** Keep your publishing registration local with LATGA to ensure swift collection of radio and live show performance cuts strictly inside Lithuania.
+
+---
+
+## Distributor Selection Criteria
+
+### Commission vs Subscription Models
+*   **Flat Fee Models:** Distributors like DistroKid or Ditto charge a yearly subscription for unlimited uploads while letting you retain 100% royalties.
+*   **Commission Models:** Distributors like CD Baby or AWAL charge per release or take a percentage (15%) of your streaming revenue.
+*   **The Strategy Choice:** Use subscription models for high-frequency release schedules. Use commission models for long-term legacy catalog storage without recurring costs.
+
+### Advanced Enterprise Features
+*   **Automated Split Sheets:** Select distributors that support automated royalty splits directly within the platform to automatically pay collaborators.
+*   **Payment Logistics:** Ensure the distributor provides clean split pay functions, allowing co-producers to withdraw their shares directly via Hyperwallet or PayPal.
+*   **Direct Delivery Pipeline:** Ensure the distributor provides direct delivery paths to tier-1 platforms: Spotify, Apple Music, YouTube Music, and TikTok.
 
 ---
 
@@ -120,7 +222,6 @@ Press release structure:
 - Streaming links (use placeholder [STREAMING LINK HERE])
 - Press contact details (use placeholder [PRESS CONTACT HERE])
 
-STRICT RULE: Never invent quotes. Only use exact words the artist provides. Mark every missing piece of information with [ADD THIS].
 
 ---
 
@@ -143,39 +244,87 @@ Always remind the artist:
 
 ---
 
-## YouTube Video Description — Full Template
+## YouTube Video Description — Tactical Optimization & Templates
 
-Generate a complete YouTube video description using this structure:
-
-First 2 lines (critical — these appear in search results before the "more" button):
-- Line 1: Artist Name — Song Title — streaming link placeholder
-- Line 2: Release date and a one-line hook about the song
-
-Short paragraph: 2 to 3 sentences about what the song is about and the feeling it creates.
-
-Lyrics section: Include full lyrics if provided. If lyrics are not available, use [ADD LYRICS HERE].
-
-Credits section:
-- Written by: [name]
-- Produced by: [name]
-- Featuring: [name if applicable]
-- Mixed and mastered by: [name if applicable]
-
-Social media links section: list all platforms with [LINK] placeholder.
-
-Streaming links section: Spotify, Apple Music, DistroKid, all others with [LINK] placeholder.
-
-Hashtags: include genre hashtags, artist name hashtag, mood hashtags, and relevant scene hashtags.
-
-Remind the artist: include the release date in the video title using this format — Artist Name — Song Title (Official Music Video) or (Official Audio).
+### Algorithm Compliance and Layout Selection Rules
+*   **The Above-The-Fold Window:** YouTube displays only the first 2 to 3 lines (approx. 150 characters) before the "Show More" button. This layout space must contain the primary Streaming/Pre-save Smartlink, Artist Name, and Song Title.
+*   **The Ingestion Law:** Include official legal credits and full lyrics inside the description field. YouTube indexes this text as searchable metadata to actively drive internal SEO ranking and Related Video algorithm suggestions.
+*   **Agent Selection Rule (Option 1 - The Modern Streamer):** Recommend this as the primary Best Practice for standard commercial music releases. It focuses heavily on direct streaming conversions and professional credit placement.
+*   **Agent Selection Rule (Option 2 - The Storyteller):** Recommend this for less formal, fan-centric, or organic indie releases where lyric search discovery is critical. Putting full lyrics in the description massively boosts organic YouTube search positioning.
+*   **Agent Selection Rule (Option 3 - The Minimalist):** Recommend this only as an alternative for electronic, instrumental, or alternative acts who strictly demand an ultra-clean, aesthetic presentation without heavy blocks of text.
 
 ---
+
+### Complete Template Collection (All Options)
+
+#### OPTION 1: THE MODERN STREAMER (Highly Recommended Standard)
+[Artist Name] — [Song Title] (Official Video / Lyric Video)
+Stream/Download: [Smartlink Placeholder URL]
+Subscribe for more official music: [YouTube Subscribe Link]
+
+"A raw, one-line emotional hook or conceptual thesis sentence about the song's meaning that immediately captures the viewer's attention."
+
+Out now via [Record Label / Independent] — Released on [Date, Year].
+
+--- CREDITS ---
+• Written by: [Lyricist/Composer Legal Name]
+• Produced by: [Producer Name]
+• Featuring: [Featured Artist Name if applicable]
+• Mixed & Mastered by: [Engineer Name]
+• Video Director / Production: [Director/Videographer Name]
+
+--- CONNECT ---
+Official Website: [URL]
+Instagram: [URL]
+Spotify: [URL]
+
+#ArtistName #SongTitle #Genre #NewMusic
+
+#### OPTION 2: THE STORYTELLER (Deep SEO and Lyric Focus)
+Official video for "[Song Title]" by [Artist Name]. 
+Listen to the new single here: [Smartlink Placeholder URL]
+Release Date: [Month Day, Year] — "[A direct, punchy quote from the song lyrics acting as the text hook]."
+
+--- LYRICS ---
+[Insert full song lyrics here. This maximizes YouTube SEO indexing for users searching by lyrics fragments.]
+
+--- AUDIO CREATION ---
+• Lyrics & Music: [Legal Names]
+• Production & Arrangement: [Names]
+• Vocalists: [Artist Name] feat. [Guest Artist]
+• Mixing & Mastering Engineering: [Names]
+
+--- FOLLOW ---
+TikTok: [URL]
+Apple Music: [URL]
+Facebook: [URL]
+
+© [Year] [Artist Name / Label]. All rights reserved.
+
+#### OPTION 3: THE MINIMALIST (Ultra Clean Alternative)
+Stream "[Song Title]": [Smartlink Placeholder URL]
+[Artist Name] • [Song Title] • Available Everywhere [Date].
+
+"One powerful, atmospheric sentence defining the sonic landscape or mood of the track."
+
+---
+TRACK CREDITS:
+Written by: [Names]
+Produced by: [Names]
+Mixed/Mastered by: [Names]
+Video Captured by: [Names]
+
+Find [Artist Name] on all platforms via link: [Linktree/Smartlink URL]
+
+#NewMusic #Vevo #[Genre]
+
+
 ## Radio Submission — Full Protocol
 
-### Timing
-Send the night before release at 18:00–20:00 local time. This hits
-morning-shift inboxes first when programmers are planning their day.
-If your release is Friday June 11th, send Thursday June 10th at 19:00.
+### Timing and Scheduling Logic (Lithuania and Regional Markets)
+*   **The Inbox Strategy:** Radio program directors and music programmers plan their daily playlists during early morning production meetings. 
+*   **Draft and Morning Send Rule:** The absolute Best Practice is to fully prepare the email draft and compile the recipient list the night before the release. Hold the email and send it early on the trelease morning to hit target inboxes between 07:00 and 08:00 AM local time on release day.
+*   **Example Timing:** If the official track release date is Friday, June 12th, you must build and save the submission draft on Thursday, June 11th at 19:00, then send it out on Friday morning at 07:00 AM.
 
 ### File Format Priority
 1. WAV (primary — required for broadcast quality)
@@ -343,7 +492,6 @@ FACEBOOK requirements:
 - About section updated with current release information
 - Release announcement post pinned to the top of the page
 
-IMPORTANT RULE for Linktree and Beacons users: If the artist already has a Linktree or Beacons page set up, always tell them: "Move your new song to the FIRST link at the top before release day. This is the single most important link in bio update you can make before the release."
 
 ---
 

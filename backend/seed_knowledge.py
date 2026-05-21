@@ -75,9 +75,9 @@ def split_markdown(content: str) -> list:
     print(f"[seed] Splitting markdown by headers...")
 
     headers_to_split_on = [
-        ("#", "Header 1"),
-        ("##", "Header 2"),
-    ]
+    ("##", "section"),
+    ("###", "subsection"),
+]
 
     splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=headers_to_split_on,
@@ -86,6 +86,27 @@ def split_markdown(content: str) -> list:
 
     chunks = splitter.split_text(content)
 
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    # Tuned for dense music distribution rules to prevent semantic dilution
+    recursive_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=600,
+        chunk_overlap=150,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+
+    final_chunks = []
+
+    for chunk in chunks:
+        # Lowered threshold to guarantee clean chunks matching the 600 limit
+        if len(chunk.page_content) > 600:
+            split_chunks = recursive_splitter.split_documents([chunk])
+            final_chunks.extend(split_chunks)
+        else:
+            final_chunks.append(chunk)
+
+    chunks = final_chunks
     # Filter out empty or very short chunks (e.g. the title block)
     chunks = [c for c in chunks if len(c.page_content.strip()) > 50]
 
@@ -119,7 +140,25 @@ def seed_knowledge_file(filename: str, namespace: str):
 
     # Step 3: Extract text and metadata separately
     texts = [chunk.page_content for chunk in chunks]
-    metadatas = [chunk.metadata for chunk in chunks]
+    
+    metadatas = []
+
+    for i, chunk in enumerate(chunks):
+        # Extract keywords for dynamic agent routing via metadata filters
+        content_str = chunk.page_content.lower()
+        content_type = "general_strategy"
+        if any(w in content_str for w in ["day", "window", "timeline", "weeks"]):
+            content_type = "distribution_rule"
+        elif any(w in content_str for w in ["isrc", "upc", "metadata", "rights"]):
+            content_type = "technical_metadata"
+
+        metadatas.append({
+            "section": chunk.metadata.get("section", "general"),
+            "subsection": chunk.metadata.get("subsection", "general"),
+            "source": "marketing_knowledge",
+            "chunk_index": i,
+            "content_type": content_type
+        })
 
     # Step 4: Set up OpenAI embeddings
     print(f"\n[seed] Initialising OpenAI embeddings (text-embedding-3-small)...")
@@ -141,12 +180,19 @@ def seed_knowledge_file(filename: str, namespace: str):
     print(f"[seed] Embedding {len(texts)} chunks and storing in Pinecone...")
     print(f"[seed] This takes about 10-20 seconds...")
 
-    PineconeVectorStore.from_texts(
-        texts=texts,
-        embedding=embeddings,
-        metadatas=metadatas,
+    vector_store = PineconeVectorStore(
         index_name=PINECONE_INDEX_NAME,
+        embedding=embeddings,
         namespace=namespace,
+    )
+
+    # Prefixed to avoid ID collisions if other marketing vectors are added later
+    ids = [f"marketing_dist_{i}" for i in range(len(texts))]
+
+    vector_store.add_texts(
+    texts=texts,
+    metadatas=metadatas,
+    ids=ids,
     )
 
     print(f"\n[seed] ✅ Done! {len(texts)} chunks stored in namespace '{namespace}'")
