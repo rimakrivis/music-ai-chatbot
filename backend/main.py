@@ -265,32 +265,22 @@ async def extract_tasks_from_response(response_text: str) -> dict:
 
     client = AsyncOpenAI()
 
-    prompt = f"""
-Today's date is {today}.
+    prompt = f"""Today: {today}
 
-Read the following music marketing assistant response and extract any actionable tasks or events that have a specific date or deadline.
+Extract ALL actionable items from this music marketing response.
 
 Rules:
-- Convert ALL relative dates ("next Friday", "in 2 weeks", "3 days before release") to exact YYYY-MM-DD dates based on today = {today}
-- If a task has a specific date → put it in calendar_events
-- If a task has no specific date → put it in todo_items with due_date as null
-- Never invent dates that are not implied by the text
-- Never return null for the arrays, always return empty arrays if nothing found
-- type must be one of: release, deadline, promo, general
+- Convert ALL relative dates to YYYY-MM-DD using today={today}
+- Dates mentioned explicitly OR implied (e.g. "2 weeks before June 11" = {today}) → calendar_events
+- Actions without dates → todo_items
+- Extract EVERY item — do not summarize or skip any
+- type: release|deadline|promo|spotify|youtube|social_media|general
+- Return ONLY valid JSON, no markdown
 
-Return ONLY valid JSON, no markdown, no explanation:
-{{
-  "calendar_events": [
-    {{"title": "...", "date": "YYYY-MM-DD", "type": "release|deadline|promo|general"}}
-  ],
-  "todo_items": [
-    {{"title": "...", "due_date": "YYYY-MM-DD or null"}}
-  ]
-}}
+{{"calendar_events":[{{"title":"...","date":"YYYY-MM-DD","type":"..."}}],"todo_items":[{{"title":"...","due_date":"YYYY-MM-DD or null"}}]}}
 
-Agent response to analyze:
-{response_text}
-"""
+Response to analyze:
+{response_text}"""
 
     try:
         response = await client.chat.completions.create(
@@ -370,8 +360,9 @@ async def chat(request: ChatRequest):
 async def event_chat(request: dict):
     """
     Dedicated creative assistant for a specific calendar task.
-    Bypasses the LangChain agent — uses GPT-4o directly with a
-    creative/tutorial system prompt. Fetches transcript for song context.
+    1. Searches marketing_knowledge ChromaDB for relevant guidelines
+    2. Fetches song transcript for real content
+    3. Uses both as context — only falls back to training data if DB empty
     """
     message = request.get("message", "")
     event_title = request.get("event_title", "")
@@ -387,35 +378,80 @@ async def event_chat(request: dict):
     if not message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    # Try to fetch transcript for song context
+    # 1. Search marketing knowledge base for relevant guidelines
+    knowledge_context = ""
+    try:
+        from langchain_openai import OpenAIEmbeddings
+        from langchain_pinecone import PineconeVectorStore
+        from config import OPENAI_API_KEY
+        import os
+
+        embeddings = OpenAIEmbeddings(
+            model="text-embedding-3-small",
+            openai_api_key=OPENAI_API_KEY
+        )
+        vector_store = PineconeVectorStore(
+            index_name=os.getenv("PINECONE_INDEX_NAME", "music-ai-chat"),
+            embedding=embeddings,
+            namespace="marketing_knowledge",
+        )
+        # Search using both the task type and the user message for better recall
+        search_query = f"{event_type} {event_title} {message}"
+        results = vector_store.similarity_search(search_query, k=3)
+        if results:
+            chunks = []
+            for doc in results:
+                header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or ""
+                chunks.append(f"[{header}]\n{doc.page_content}")
+            knowledge_context = "\n\n---\n\n".join(chunks)
+            print(f"   📚 Retrieved {len(results)} knowledge chunks from DB")
+        else:
+            print("   📚 No knowledge chunks found — using training data")
+    except Exception as e:
+        print(f"   ⚠️ Knowledge search failed: {e}")
+
+    # 2. Fetch transcript for real song content
     transcript_context = ""
     if video_id:
         try:
             result = get_transcript_from_chroma(video_id)
             if result:
                 transcript_context = result["transcript_text"][:800]
-                print(f"   📄 Got transcript context: {len(transcript_context)} chars")
+                print(f"   📄 Got transcript: {len(transcript_context)} chars")
         except Exception as e:
             print(f"   ⚠️ Could not fetch transcript: {e}")
 
-    system_prompt = f"""You are a music industry professional writing real, submission-ready content for artists.
+    # 3. Build system prompt — DB knowledge first, training data as fallback
+    # Determine tone based on task type
+    tone_guide = {
+        "spotify": "formal, professional, industry-standard",
+        "deadline": "clear, direct, professional",
+        "release": "professional with excitement",
+        "youtube": "engaging, platform-native",
+        "social_media": "casual, platform-matched — Instagram: visual storytelling; TikTok: punchy hook first; Twitter/X: concise wit",
+        "promo": "energetic, promotional",
+        "general": "professional but approachable",
+    }
+    tone = tone_guide.get(event_type, "professional but approachable")
 
-Current task: "{event_title}" (type: {event_type}, scheduled: {event_date})
-Song: "{video_title}" by {video_channel}
+    artist = video_channel if video_channel and video_channel != "Unknown Artist" else (video_title.split(" - ")[0] if " - " in video_title else video_channel)
 
-{f'Song lyrics/transcript:{chr(10)}{transcript_context}' if transcript_context else ''}
+    system_prompt = f"""You are a music industry professional. Write submission-ready content only.
 
-{f'Previously saved notes for this task:{chr(10)}{doc_content[:500]}' if doc_content else ''}
+Task: "{event_title}" | Type: {event_type} | Date: {event_date}
+Song: "{video_title}" by "{artist}"
+Tone: {tone}
 
-RULES:
-- Write REAL content, never use placeholders like [mention X] or [add Y]
-- If you don't know a detail, make a reasonable creative choice based on the song title, lyrics, and artist name
-- For Spotify pitches: max 500 characters, no brackets, no explanations, submission-ready
-- For press releases: professional tone, real sentences, ready to send
-- For captions: platform-appropriate, ready to post
-- For emails: complete, ready to send
-- Everything must be specific to "{video_title}" by {video_channel}
-- Never explain what to fill in — just write the final content"""
+{f"LYRICS:{chr(10)}{transcript_context}" if transcript_context else ""}
+{f"GUIDELINES:{chr(10)}{knowledge_context}" if knowledge_context else ""}
+{f"SAVED NOTES:{chr(10)}{doc_content[:400]}" if doc_content else ""}
+
+Rules:
+- Follow GUIDELINES strictly if provided
+- Use LYRICS for specific song references
+- No placeholders ever — write real content
+- Spotify pitch: max 500 chars
+- Output only the final content, no explanation"""
 
     try:
         client = AsyncOpenAI()

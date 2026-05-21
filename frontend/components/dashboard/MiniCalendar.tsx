@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarEvent, DotDate } from "@/lib/types";
 
 interface MiniCalendarProps {
@@ -38,7 +38,17 @@ const XIcon = () => (
 );
 
 export default function MiniCalendar({ dotDates = [], events = [], onEventClick }: MiniCalendarProps) {
-  const [currentDate, setCurrentDate] = useState(new Date());
+  const [currentDate, setCurrentDate] = useState(() => {
+    if (events && events.length > 0) {
+      return new Date(events[0].date + "T00:00:00");
+    }
+    return new Date();
+  });
+  useEffect(() => {
+    if (events && events.length > 0) {
+      setCurrentDate(new Date(events[0].date + "T00:00:00"));
+    }
+  }, [events.length]);
   const [selectedDay, setSelectedDay] = useState(new Date().getDate());
   // When a day has multiple events, show a picker popover
   const [pickerDay, setPickerDay] = useState<number | null>(null);
