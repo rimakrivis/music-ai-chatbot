@@ -83,7 +83,7 @@ async def update_calendar_event(event_id: int, updates: dict) -> bool:
     """Update title and/or date of a calendar event."""
     try:
         supabase = get_supabase()
-        allowed = {k: v for k, v in updates.items() if k in ("title", "date")}
+        allowed = {k: v for k, v in updates.items() if k in ("title", "date", "saved_content")}
         if not allowed:
             return False
         supabase.table("calendar_events").update(allowed).eq("id", event_id).execute()

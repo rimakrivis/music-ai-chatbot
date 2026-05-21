@@ -3,8 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { CalendarEvent, EVENT_COLORS, ChatMessage } from "@/lib/types";
 
-// ─── Icons ────────────────────────────────────────────────────────────────────
-
 const XIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
     <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
@@ -39,8 +37,6 @@ const PlusIcon = () => (
   </svg>
 );
 
-// ─── Types ───────────────────────────────────────────────────────────────────
-
 interface PendingSave {
   content: string;
   messageIndex: number;
@@ -53,11 +49,8 @@ interface EventDrawerProps {
   videoId?: string;
   videoTitle?: string;
   videoChannel?: string;
-  // Called when savedContent changes so page.tsx can persist it in state
   onSaveContent?: (eventId: number, content: string) => void;
 }
-
-// ─── Component ───────────────────────────────────────────────────────────────
 
 export default function EventDrawer({
   event,
@@ -72,15 +65,12 @@ export default function EventDrawer({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
-  // The saved doc content for this event (persists until reset)
   const [docContent, setDocContent] = useState<string>("");
-  // AI response pending save (shows replace/add prompt)
   const [pendingSave, setPendingSave] = useState<PendingSave | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  // Reset when event changes
   useEffect(() => {
     if (event) {
       setIsVisible(true);
@@ -89,7 +79,7 @@ export default function EventDrawer({
       setMessages([
         {
           role: "assistant",
-          content: `I'm ready to help with **"${event.title}"** (${event.date}). Ask me to write a pitch, caption, strategy, or anything specific to this task.`,
+          content: `I'm ready to help with **"${event.title}"** (${event.date}). Ask me to write a Spotify pitch, Instagram caption, press release, or anything specific to this task.`,
         },
       ]);
     } else {
@@ -114,19 +104,7 @@ export default function EventDrawer({
     setLoading(true);
 
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-      // Build a context-rich prompt for the agent
-      const contextPrefix = [
-        videoId ? `[Song context: "${videoTitle}" by ${videoChannel}, video_id: ${videoId}]` : "",
-        `[Task context: "${event.title}" — type: ${event.type}, date: ${event.date}]`,
-        docContent ? `[Existing saved notes for this task: "${docContent.slice(0, 300)}${docContent.length > 300 ? "..." : ""}"]` : "",
-        userMessage,
-      ]
-        .filter(Boolean)
-        .join("\n");
-
-      const res = await fetch(`${API_URL}/event-chat`, {
+      const res = await fetch(`${API}/event-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -136,26 +114,17 @@ export default function EventDrawer({
           event_date: event.date,
           video_title: videoTitle ?? "",
           video_channel: videoChannel ?? "",
+          video_id: videoId ?? "",
           doc_content: docContent,
         }),
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-
       const assistantContent: string = data.response ?? "Sorry, no response received.";
-      const newIndex = messages.length + 1; // +1 for the user message we just added
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: assistantContent,
-        },
-      ]);
-
-      // Offer to save this response to the doc panel
-      setPendingSave({ content: assistantContent, messageIndex: newIndex });
+      setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
+      setPendingSave({ content: assistantContent, messageIndex: messages.length + 1 });
     } catch (err) {
       console.error("[EventDrawer] chat error:", err);
       setMessages((prev) => [
@@ -165,7 +134,7 @@ export default function EventDrawer({
     } finally {
       setLoading(false);
     }
-  }, [input, loading, event, messages.length, videoId, videoTitle, videoChannel, sessionId, docContent]);
+  }, [input, loading, event, messages.length, videoId, videoTitle, videoChannel, sessionId, docContent, API]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -174,9 +143,8 @@ export default function EventDrawer({
     }
   };
 
-  const handleSaveToDoc = (mode: "replace" | "add") => {
+  const handleSaveToDoc = async (mode: "replace" | "add") => {
     if (!pendingSave || !event) return;
-
     const newContent =
       mode === "replace"
         ? pendingSave.content
@@ -187,6 +155,18 @@ export default function EventDrawer({
     setDocContent(newContent);
     onSaveContent?.(event.id, newContent);
     setPendingSave(null);
+
+    // Persist to Supabase
+    try {
+      await fetch(`${API}/calendar/events/${event.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saved_content: newContent }),
+      });
+      console.log("[EventDrawer] Saved content to Supabase");
+    } catch (e) {
+      console.error("[EventDrawer] Failed to save content to Supabase", e);
+    }
   };
 
   if (!event) return null;
@@ -195,7 +175,6 @@ export default function EventDrawer({
 
   return (
     <>
-      {/* Backdrop */}
       <div
         onClick={onClose}
         className={`fixed inset-0 bg-black/20 backdrop-blur-sm z-40 transition-opacity duration-300 ${
@@ -203,15 +182,13 @@ export default function EventDrawer({
         }`}
       />
 
-      {/* Drawer — splits into two panels side by side on wider screens */}
       <div
         className={`fixed top-0 right-0 h-full z-50 flex transition-transform duration-300 ease-out
           ${isVisible ? "translate-x-0" : "translate-x-full"}
           w-full max-w-2xl`}
       >
-        {/* ── Left panel: Event document ───────────────────────────────── */}
+        {/* Left panel: Notes */}
         <div className="w-[45%] flex flex-col bg-slate-50 border-r border-slate-200 overflow-hidden">
-          {/* Header */}
           <div className={`${colors.bg} px-4 py-4 border-b border-slate-200 shrink-0`}>
             <div className="flex items-center gap-2 mb-1">
               <span className={`${colors.icon} text-xs font-semibold uppercase tracking-wide`}>
@@ -222,13 +199,11 @@ export default function EventDrawer({
             <p className="text-slate-500 text-xs mt-1">{event.date}</p>
           </div>
 
-          {/* Doc label */}
           <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 bg-white shrink-0">
             <FileTextIcon />
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Notes</span>
           </div>
 
-          {/* Doc content area */}
           <div className="flex-1 overflow-y-auto p-4">
             {docContent ? (
               <div className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
@@ -240,18 +215,17 @@ export default function EventDrawer({
                   <FileTextIcon />
                 </div>
                 <p className="text-xs text-slate-400 max-w-[160px]">
-                  Chat with the AI and save outputs here. They'll stay until you reset.
+                  Chat with the AI and save outputs here.
                 </p>
               </div>
             )}
           </div>
         </div>
 
-        {/* ── Right panel: Chat ─────────────────────────────────────────── */}
+        {/* Right panel: Chat */}
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
-          {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
-            <span className="text-sm font-semibold text-slate-700">AI Assistant</span>
+            <span className="text-sm font-semibold text-slate-700">Creative Assistant</span>
             <button
               onClick={onClose}
               className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
@@ -260,7 +234,6 @@ export default function EventDrawer({
             </button>
           </div>
 
-          {/* Messages */}
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
             {messages.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -290,7 +263,6 @@ export default function EventDrawer({
             <div ref={messagesEndRef} />
           </div>
 
-          {/* ── Pending save prompt ───────────────────────────────────── */}
           {pendingSave && (
             <div className="mx-4 mb-3 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden shrink-0">
               <div className="px-3 py-2 border-b border-slate-100">
@@ -326,7 +298,6 @@ export default function EventDrawer({
             </div>
           )}
 
-          {/* Input */}
           <div className="px-4 pb-4 pt-2 shrink-0">
             <div className="relative flex items-center">
               <input
@@ -334,7 +305,7 @@ export default function EventDrawer({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask about this task..."
+                placeholder="Write a caption, Spotify pitch, press release..."
                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-12 text-sm text-slate-700 placeholder-slate-400 outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-100 transition-all"
               />
               <button

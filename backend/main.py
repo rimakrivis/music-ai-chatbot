@@ -369,9 +369,9 @@ async def chat(request: ChatRequest):
 @app.post("/event-chat")
 async def event_chat(request: dict):
     """
-    Dedicated chat for the EventDrawer panel.
-    Skips the LangChain agent — uses GPT-4o directly with a
-    creative/tutorial system prompt focused on a specific calendar task.
+    Dedicated creative assistant for a specific calendar task.
+    Bypasses the LangChain agent — uses GPT-4o directly with a
+    creative/tutorial system prompt. Fetches transcript for song context.
     """
     message = request.get("message", "")
     event_title = request.get("event_title", "")
@@ -379,6 +379,7 @@ async def event_chat(request: dict):
     event_date = request.get("event_date", "")
     video_title = request.get("video_title", "")
     video_channel = request.get("video_channel", "")
+    video_id = request.get("video_id", "")
     doc_content = request.get("doc_content", "")
 
     print(f"\n📥 [/event-chat] Task: '{event_title}' | Message: '{message[:60]}'")
@@ -386,21 +387,35 @@ async def event_chat(request: dict):
     if not message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    system_prompt = f"""You are a music industry creative assistant helping an artist execute a specific marketing task.
+    # Try to fetch transcript for song context
+    transcript_context = ""
+    if video_id:
+        try:
+            result = get_transcript_from_chroma(video_id)
+            if result:
+                transcript_context = result["transcript_text"][:800]
+                print(f"   📄 Got transcript context: {len(transcript_context)} chars")
+        except Exception as e:
+            print(f"   ⚠️ Could not fetch transcript: {e}")
+
+    system_prompt = f"""You are a music industry professional writing real, submission-ready content for artists.
 
 Current task: "{event_title}" (type: {event_type}, scheduled: {event_date})
-Artist/Song: "{video_title}" by {video_channel}
+Song: "{video_title}" by {video_channel}
 
-Your role:
-- Give specific, actionable creative guidance for THIS task
-- Write ready-to-use content when asked (captions, pitches, emails, scripts)
-- Give platform-specific tutorials and best practices
-- Be concise and practical — artists are busy
-- Format output cleanly so it can be copied and used directly
+{f'Song lyrics/transcript:{chr(10)}{transcript_context}' if transcript_context else ''}
 
-{f'Previously saved notes for this task: {doc_content[:500]}' if doc_content else ''}
+{f'Previously saved notes for this task:{chr(10)}{doc_content[:500]}' if doc_content else ''}
 
-Do NOT give generic advice. Everything must be specific to this task, this artist, and this song."""
+RULES:
+- Write REAL content, never use placeholders like [mention X] or [add Y]
+- If you don't know a detail, make a reasonable creative choice based on the song title, lyrics, and artist name
+- For Spotify pitches: max 500 characters, no brackets, no explanations, submission-ready
+- For press releases: professional tone, real sentences, ready to send
+- For captions: platform-appropriate, ready to post
+- For emails: complete, ready to send
+- Everything must be specific to "{video_title}" by {video_channel}
+- Never explain what to fill in — just write the final content"""
 
     try:
         client = AsyncOpenAI()
