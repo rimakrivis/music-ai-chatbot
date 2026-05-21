@@ -22,26 +22,25 @@ const ChevronRightIcon = () => (
   </svg>
 );
 
-const BookmarkIcon = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5">
-    <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/>
+const CheckCircleIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+    <circle cx="12" cy="12" r="10"/>
+    <polyline points="9 12 11 14 15 10"/>
   </svg>
 );
 
-// Group events by date
 function groupEventsByDate(events: CalendarEvent[]) {
   const groups: Record<string, CalendarEvent[]> = {};
   events.forEach((event) => {
-    if (!groups[event.date]) {
-      groups[event.date] = [];
-    }
+    if (!groups[event.date]) groups[event.date] = [];
     groups[event.date].push(event);
   });
   return groups;
 }
 
+// FIX: parse as local date
 function formatDayInfo(dateStr: string) {
-  const date = new Date(dateStr);
+  const date = new Date(dateStr + "T00:00:00");
   const day = date.getDate();
   const weekday = date.toLocaleDateString("en-US", { weekday: "short" }).toUpperCase();
   return { day, weekday };
@@ -49,8 +48,7 @@ function formatDayInfo(dateStr: string) {
 
 function getEventIcon(type: string) {
   switch (type) {
-    case "release":
-      return <MusicIcon />;
+    case "release": return <MusicIcon />;
     case "spotify":
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
@@ -60,7 +58,7 @@ function getEventIcon(type: string) {
     case "social_media":
       return (
         <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-          <rect width="20" height="20" x="2" y="2" rx="5" stroke="currentColor" strokeWidth="0" fill="currentColor" opacity="0.2"/>
+          <rect width="20" height="20" x="2" y="2" rx="5" fill="currentColor" opacity="0.2"/>
           <circle cx="12" cy="12" r="4" fill="currentColor"/>
           <circle cx="18" cy="6" r="1.5" fill="currentColor"/>
         </svg>
@@ -98,10 +96,8 @@ export default function DailyFeed({ events, onEventClick }: DailyFeedProps) {
 
   return (
     <div className="flex flex-col">
-      {/* Header */}
       <h1 className="text-3xl font-bold text-slate-800 mb-8">Daily Dashboard</h1>
 
-      {/* Daily sections */}
       <div className="flex flex-col gap-6">
         {sortedDates.map((dateStr) => {
           const { day, weekday } = formatDayInfo(dateStr);
@@ -119,48 +115,39 @@ export default function DailyFeed({ events, onEventClick }: DailyFeedProps) {
               <div className="flex-1 flex flex-col gap-3">
                 {dayEvents.map((event) => {
                   const colors = EVENT_COLORS[event.type] || EVENT_COLORS.general;
+                  const isCompleted = event.completed;
 
                   return (
                     <button
                       key={event.id}
                       onClick={() => onEventClick(event)}
-                      className={`group w-full text-left ${colors.bg} rounded-2xl p-4 pr-3 flex items-start justify-between gap-3 transition-all duration-200 hover:shadow-md hover:scale-[1.01] active:scale-[0.99]`}
+                      className={`group w-full text-left rounded-2xl p-4 pr-3 flex items-start justify-between gap-3 transition-all duration-200 hover:shadow-md hover:scale-[1.01] active:scale-[0.99]
+                        ${isCompleted ? colors.completedBg : colors.bg}`}
                     >
                       <div className="flex items-start gap-3 min-w-0">
-                        <span className={`${colors.icon} mt-0.5`}>
-                          {getEventIcon(event.type)}
+                        <span className={`mt-0.5 transition-opacity ${isCompleted ? "opacity-30" : colors.icon}`}>
+                          {isCompleted ? <CheckCircleIcon /> : getEventIcon(event.type)}
                         </span>
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="font-semibold text-slate-800 text-sm">
-                              {event.type}
-                            </span>
-                            <span className="text-slate-400 text-xs">
+                            <span className={`font-semibold text-sm transition-colors ${isCompleted ? "text-slate-400" : "text-slate-800"}`}>
                               {colors.label}
                             </span>
                           </div>
-                          <p className="text-slate-700 text-sm mt-0.5 font-medium">
+                          <p className={`text-sm mt-0.5 font-medium transition-colors ${isCompleted ? "text-slate-400 line-through" : "text-slate-700"}`}>
                             {event.title}
                           </p>
-                          {event.description && (
+                          {event.description && !isCompleted && (
                             <p className="text-slate-500 text-xs mt-1 whitespace-pre-line">
                               {event.description}
                             </p>
                           )}
-                          {event.type === "promo" && (
-                            <div className="flex items-center gap-2 mt-2">
-                              <span className="text-red-500">
-                                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-                                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
-                                </svg>
-                              </span>
-                              <BookmarkIcon />
-                              <span className="text-xs text-slate-600">Save Conversation</span>
-                            </div>
+                          {isCompleted && (
+                            <p className="text-xs text-slate-400 mt-1 italic">Completed</p>
                           )}
                         </div>
                       </div>
-                      <span className="text-slate-400 group-hover:text-slate-600 transition-colors mt-1 shrink-0">
+                      <span className={`transition-colors mt-1 shrink-0 ${isCompleted ? "text-slate-300" : "text-slate-400 group-hover:text-slate-600"}`}>
                         <ChevronRightIcon />
                       </span>
                     </button>

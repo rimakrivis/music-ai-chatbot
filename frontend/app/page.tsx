@@ -35,12 +35,15 @@ export default function DashboardPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
+      content:
+        "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
     },
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  // ── Load from Supabase ───────────────────────────────────────────────────
 
   const loadFromSupabase = useCallback(async () => {
     try {
@@ -52,21 +55,27 @@ export default function DashboardPage() {
       const todosData = await todosRes.json();
 
       if (eventsData.events?.length > 0) {
-        setEvents(eventsData.events.map((e: any) => ({
-          id: e.id,
-          title: e.title,
-          date: e.date,
-          type: e.type,
-        })));
-        console.log("[page] Loaded", eventsData.events.length, "events from Supabase");
+        setEvents(
+          eventsData.events.map((e: any) => ({
+            id: e.id,
+            title: e.title,
+            date: e.date,
+            type: e.type,
+            completed: e.status === "done",
+            savedContent: e.saved_content ?? "",
+            linkedTodoId: e.linked_todo_id ?? undefined,
+          }))
+        );
       }
       if (todosData.items?.length > 0) {
-        setTodos(todosData.items.map((t: any) => ({
-          id: t.id,
-          title: t.title,
-          completed: t.status === "done",
-        })));
-        console.log("[page] Loaded", todosData.items.length, "todos from Supabase");
+        setTodos(
+          todosData.items.map((t: any) => ({
+            id: t.id,
+            title: t.title,
+            completed: t.status === "done",
+            linkedEventId: t.linked_event_id ?? undefined,
+          }))
+        );
       }
     } catch (e) {
       console.error("[page] Failed to load from Supabase", e);
@@ -77,8 +86,9 @@ export default function DashboardPage() {
     if (sessionId) loadFromSupabase();
   }, [sessionId, loadFromSupabase]);
 
+  // ── Video loaded ─────────────────────────────────────────────────────────
+
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
-    console.log("[page] Video loaded:", video.title);
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
     setChatMessages([
@@ -91,49 +101,131 @@ export default function DashboardPage() {
     setTodos([]);
   }, []);
 
-  const handleToggleTodo = (id: number) => {
-    setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
-    );
-  };
+  // ── Todo toggle — also syncs linked event ────────────────────────────────
+
+  const handleToggleTodo = useCallback(
+    async (id: number) => {
+      const todo = todos.find((t) => t.id === id);
+      if (!todo) return;
+      const newCompleted = !todo.completed;
+
+      // Optimistic update
+      setTodos((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t))
+      );
+
+      // If the todo has a linked event, mirror completion there too
+      if (todo.linkedEventId) {
+        setEvents((prev) =>
+          prev.map((e) =>
+            e.id === todo.linkedEventId ? { ...e, completed: newCompleted } : e
+          )
+        );
+      }
+
+      // Persist to Supabase
+      try {
+        await fetch(`${API}/todos/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newCompleted ? "done" : "pending" }),
+        });
+      } catch (err) {
+        console.error("[page] Failed to update todo status", err);
+      }
+    },
+    [todos, API]
+  );
+
+  // ── Todo title click — open drawer for linked event or synthetic event ───
+
+  const handleTodoTitleClick = useCallback(
+    (todo: TodoItem) => {
+      if (todo.linkedEventId) {
+        const linked = events.find((e) => e.id === todo.linkedEventId);
+        if (linked) {
+          setSelectedEvent(linked);
+          return;
+        }
+      }
+      // No linked event — open drawer with a synthetic event so the user can
+      // still chat about this task
+      setSelectedEvent({
+        id: -(todo.id), // negative ID signals synthetic
+        title: todo.title,
+        date: "",
+        type: "general",
+        savedContent: "",
+      });
+    },
+    [events]
+  );
+
+  // ── Progress ─────────────────────────────────────────────────────────────
 
   const completedCount = todos.filter((t) => t.completed).length;
   const progressPercent = todos.length > 0 ? (completedCount / todos.length) * 100 : 0;
 
-  const handleEventClick = (event: CalendarEvent) => {
-    setSelectedEvent(event);
-  };
+  // ── Event drawer ─────────────────────────────────────────────────────────
 
-  const handleCloseDrawer = () => {
+  const handleEventClick = useCallback((event: CalendarEvent) => {
+    setSelectedEvent(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
     setSelectedEvent(null);
-  };
+  }, []);
+
+  // When AI content is saved to the doc panel, persist it in events state
+  const handleSaveContent = useCallback((eventId: number, content: string) => {
+    if (eventId < 0) return; // synthetic event, nothing to persist
+    setEvents((prev) =>
+      prev.map((e) => (e.id === eventId ? { ...e, savedContent: content } : e))
+    );
+    // Keep selectedEvent in sync so the drawer doesn't lose it on re-render
+    setSelectedEvent((prev) =>
+      prev && prev.id === eventId ? { ...prev, savedContent: content } : prev
+    );
+    // Optionally persist to Supabase — extend PATCH endpoint to accept saved_content
+    fetch(`${API}/calendar/events/${eventId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ saved_content: content }),
+    }).catch((err) => console.error("[page] Failed to save doc content", err));
+  }, [API]);
+
+  // ── Task confirmation ────────────────────────────────────────────────────
 
   function handleTaskConfirm(msgIndex: number) {
     setChatMessages((prev) =>
-      prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
+      prev.map((m, i) => (i === msgIndex ? { ...m, tasksConfirmed: true } : m))
     );
     loadFromSupabase();
   }
 
   function handleTaskDismiss(msgIndex: number) {
     setChatMessages((prev) =>
-      prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
+      prev.map((m, i) => (i === msgIndex ? { ...m, tasksConfirmed: true } : m))
     );
   }
+
+  // ── Main chat ────────────────────────────────────────────────────────────
 
   const handleSendMessage = async (message: string) => {
     if (!videoInfo) {
       setChatMessages((prev) => [
         ...prev,
         { role: "user", content: message },
-        { role: "assistant", content: "Please load a YouTube song first using the panel above." },
+        {
+          role: "assistant",
+          content: "Please load a YouTube song first using the panel above.",
+        },
       ]);
       return;
     }
 
     setChatMessages((prev) => [...prev, { role: "user", content: message }]);
     setIsChatLoading(true);
-    console.log("[page] Sending message to agent:", message);
 
     try {
       const data = await sendMessage(
@@ -143,13 +235,6 @@ export default function DashboardPage() {
         videoInfo.title,
         videoInfo.channel
       );
-
-      console.log("[page] Agent response received:", {
-        response_length: data.response.length,
-        tools_used: data.tools_used,
-        calendar_events: data.calendar_events?.length ?? 0,
-        todo_items: data.todo_items?.length ?? 0,
-      });
 
       const hasTasks =
         (data.calendar_events && data.calendar_events.length > 0) ||
@@ -161,12 +246,14 @@ export default function DashboardPage() {
           role: "assistant",
           content: data.response,
           tasks: hasTasks
-            ? { calendar_events: data.calendar_events || [], todo_items: data.todo_items || [] }
+            ? {
+                calendar_events: data.calendar_events || [],
+                todo_items: data.todo_items || [],
+              }
             : undefined,
           tasksConfirmed: false,
         },
       ]);
-
     } catch (err) {
       console.error("[page] Chat error:", err);
       setChatMessages((prev) => [
@@ -181,25 +268,7 @@ export default function DashboardPage() {
     }
   };
 
-  const now = new Date();
-  const calendarDotDates = events
-    .filter((e) => {
-      const d = new Date(e.date + "T00:00:00");
-      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-    })
-    .map((e) => {
-      const day = parseInt(e.date.split("-")[2], 10);
-      const colorMap: Record<string, string> = {
-        release: "purple",
-        spotify: "green",
-        youtube: "red",
-        social_media: "blue",
-        promo: "orange",
-        deadline: "rose",
-        general: "slate",
-      };
-      return { date: day, color: colorMap[e.type] ?? "slate" };
-    });
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-[#f7f5f2] p-6">
@@ -207,8 +276,15 @@ export default function DashboardPage() {
 
         {/* Left Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <MiniCalendar dotDates={calendarDotDates} />
-          <TodoListPanel todos={todos} onToggle={handleToggleTodo} />
+          <MiniCalendar
+            events={events}
+            onEventClick={handleEventClick}
+          />
+          <TodoListPanel
+            todos={todos}
+            onToggle={handleToggleTodo}
+            onTitleClick={handleTodoTitleClick}
+          />
           <ProgressBar progress={progressPercent} />
         </aside>
 
@@ -217,7 +293,9 @@ export default function DashboardPage() {
           {events.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
               <span className="text-5xl">🎵</span>
-              <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
+              <p className="text-sm">
+                Load a song and ask for a marketing plan to see your schedule here.
+              </p>
             </div>
           ) : (
             <DailyFeed events={events} onEventClick={handleEventClick} />
@@ -252,17 +330,25 @@ export default function DashboardPage() {
       <EventDrawer
         event={selectedEvent}
         onClose={handleCloseDrawer}
+        sessionId={sessionId}
+        videoId={videoInfo?.video_id}
+        videoTitle={videoInfo?.title}
+        videoChannel={videoInfo?.channel}
+        onSaveContent={handleSaveContent}
       />
-  {/* Reset session button — subtle, bottom left */}
+
+      {/* Reset session button */}
       <button
         onClick={async () => {
           await fetch(`${API}/session/${sessionId}`, { method: "DELETE" });
           setEvents([]);
           setTodos([]);
-          setChatMessages([{
-            role: "assistant",
-            content: "Session cleared. Paste a YouTube URL to start fresh.",
-          }]);
+          setChatMessages([
+            {
+              role: "assistant",
+              content: "Session cleared. Paste a YouTube URL to start fresh.",
+            },
+          ]);
         }}
         className="fixed bottom-4 left-4 text-xs text-slate-300 hover:text-rose-400 transition-colors"
         title="Clear session"
@@ -271,4 +357,4 @@ export default function DashboardPage() {
       </button>
     </div>
   );
-}  
+}

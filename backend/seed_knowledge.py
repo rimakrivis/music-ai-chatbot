@@ -22,7 +22,7 @@ import sys
 
 from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
-from langchain_text_splitters import MarkdownHeaderTextSplitter
+from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
 
 from config import OPENAI_API_KEY
 from pipeline import get_pinecone_index
@@ -32,13 +32,8 @@ from pipeline import get_pinecone_index
 # PATHS — both relative to backend/ folder
 # -------------------------------------------------------
 
-# Knowledge files live in backend/knowledge/
 KNOWLEDGE_DIR = os.path.join(os.path.dirname(__file__), "knowledge")
-
-# Pinecone config
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai-chat")
-
-# Namespace in Pinecone
 NAMESPACE = "marketing_knowledge"
 
 
@@ -67,17 +62,14 @@ def load_markdown_file(filename: str) -> str:
 
 # -------------------------------------------------------
 # HELPER — split markdown into chunks by ## headers
-#
-# MarkdownHeaderTextSplitter splits at header boundaries.
-# Each chunk gets metadata: {"Header 1": "...", "Header 2": "..."}
 # -------------------------------------------------------
 def split_markdown(content: str) -> list:
     print(f"[seed] Splitting markdown by headers...")
 
     headers_to_split_on = [
-    ("##", "section"),
-    ("###", "subsection"),
-]
+        ("##", "section"),
+        ("###", "subsection"),
+    ]
 
     splitter = MarkdownHeaderTextSplitter(
         headers_to_split_on=headers_to_split_on,
@@ -86,9 +78,7 @@ def split_markdown(content: str) -> list:
 
     chunks = splitter.split_text(content)
 
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-    # Tuned for dense music distribution rules to prevent semantic dilution
+    # Tuned for dense music distribution rules — flexible enough for templates
     recursive_splitter = RecursiveCharacterTextSplitter(
         chunk_size=600,
         chunk_overlap=150,
@@ -99,33 +89,11 @@ def split_markdown(content: str) -> list:
     final_chunks = []
 
     for chunk in chunks:
-        # Lowered threshold to guarantee clean chunks matching the 600 limit
-        if len(chunk.page_content) > 600:
-            split_chunks = recursive_splitter.split_documents([chunk])
-            final_chunks.extend(split_chunks)
-        else:
-            final_chunks.append(chunk)
+        content_lower = chunk.page_content.lower()
 
-    chunks = final_chunks
-
-   from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-    # Tuned for dense music rules but flexible enough for templates
-    recursive_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=600,
-        chunk_overlap=150,
-        length_function=len,
-        separators=["\n\n", "\n", ". ", " ", ""]
-    )
-
-    final_chunks = []
-
-    for chunk in chunks:
-        content = chunk.page_content.lower()
-        
-        # PROTECTION LAW: If the chunk contains a template, formula, or layout, 
-        # DO NOT split it even if it exceeds 600 characters.
-        if any(w in content for w in ["template", "layout:", "formula", "option "]):
+        # PROTECTION: if the chunk contains a template, formula, or layout,
+        # do NOT split it even if it exceeds 600 characters.
+        if any(w in content_lower for w in ["template", "layout:", "formula", "option "]):
             final_chunks.append(chunk)
         # Otherwise, if it's normal text and too long, split it cleanly
         elif len(chunk.page_content) > 700:
@@ -134,14 +102,13 @@ def split_markdown(content: str) -> list:
         else:
             final_chunks.append(chunk)
 
-    chunks = final_chunks 
     # Filter out empty or very short chunks (e.g. the title block)
-    chunks = [c for c in chunks if len(c.page_content.strip()) > 50]
+    chunks = [c for c in final_chunks if len(c.page_content.strip()) > 50]
 
     print(f"[seed] Created {len(chunks)} chunks after filtering")
 
     for i, chunk in enumerate(chunks):
-        header = chunk.metadata.get("Header 2") or chunk.metadata.get("Header 1") or "No header"
+        header = chunk.metadata.get("section") or chunk.metadata.get("subsection") or "No header"
         preview = chunk.page_content[:80].replace("\n", " ")
         print(f"[seed]   Chunk {i+1:02d} | {header[:40]:<40} | {preview}...")
 
@@ -166,13 +133,11 @@ def seed_knowledge_file(filename: str, namespace: str):
         print(f"[seed] ❌ No chunks created. Check the markdown formatting.")
         sys.exit(1)
 
-    # Step 3: Extract text and metadata separately
+    # Step 3: Extract text and metadata
     texts = [chunk.page_content for chunk in chunks]
-    
-    metadatas = []
 
+    metadatas = []
     for i, chunk in enumerate(chunks):
-        # Extract keywords for dynamic agent routing via metadata filters
         content_str = chunk.page_content.lower()
         content_type = "general_strategy"
         if any(w in content_str for w in ["day", "window", "timeline", "weeks"]):
@@ -185,7 +150,7 @@ def seed_knowledge_file(filename: str, namespace: str):
             "subsection": chunk.metadata.get("subsection", "general"),
             "source": "marketing_knowledge",
             "chunk_index": i,
-            "content_type": content_type
+            "content_type": content_type,
         })
 
     # Step 4: Set up OpenAI embeddings
@@ -214,13 +179,12 @@ def seed_knowledge_file(filename: str, namespace: str):
         namespace=namespace,
     )
 
-    # Prefixed to avoid ID collisions if other marketing vectors are added later
     ids = [f"marketing_dist_{i}" for i in range(len(texts))]
 
     vector_store.add_texts(
-    texts=texts,
-    metadatas=metadatas,
-    ids=ids,
+        texts=texts,
+        metadatas=metadatas,
+        ids=ids,
     )
 
     print(f"\n[seed] ✅ Done! {len(texts)} chunks stored in namespace '{namespace}'")
@@ -228,7 +192,7 @@ def seed_knowledge_file(filename: str, namespace: str):
 
 
 # -------------------------------------------------------
-# VERIFICATION — do a quick test search after seeding
+# VERIFICATION — quick test search after seeding
 # -------------------------------------------------------
 def verify_collection(namespace: str):
     print(f"\n[seed] ── Verification search ──")
@@ -256,7 +220,7 @@ def verify_collection(namespace: str):
 
     print(f"[seed] ✅ Verification passed — {len(results)} results returned")
     for i, doc in enumerate(results):
-        header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or "No header"
+        header = doc.metadata.get("section") or doc.metadata.get("subsection") or "No header"
         preview = doc.page_content[:120].replace("\n", " ")
         print(f"\n[seed]   Result {i+1}: [{header}]")
         print(f"[seed]   {preview}...")
@@ -269,17 +233,11 @@ if __name__ == "__main__":
     print("\n🌱 Music AI — Knowledge Base Seeder")
     print("=====================================\n")
 
-    # Seed marketing knowledge
-    # To add more files later:
-    #   seed_knowledge_file("platform_tutorials.md", "platform_tutorials")
-    #   seed_knowledge_file("media_contacts.md", "media_contacts")
-
     chunks_created = seed_knowledge_file(
         filename="marketing_knowledge.md",
         namespace=NAMESPACE,
     )
 
-    # Run a quick verification search
     verify_collection(NAMESPACE)
 
     print(f"\n✅ Seeding complete!")
