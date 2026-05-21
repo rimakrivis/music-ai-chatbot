@@ -107,6 +107,34 @@ def split_markdown(content: str) -> list:
             final_chunks.append(chunk)
 
     chunks = final_chunks
+
+   from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+    # Tuned for dense music rules but flexible enough for templates
+    recursive_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=600,
+        chunk_overlap=150,
+        length_function=len,
+        separators=["\n\n", "\n", ". ", " ", ""]
+    )
+
+    final_chunks = []
+
+    for chunk in chunks:
+        content = chunk.page_content.lower()
+        
+        # PROTECTION LAW: If the chunk contains a template, formula, or layout, 
+        # DO NOT split it even if it exceeds 600 characters.
+        if any(w in content for w in ["template", "layout:", "formula", "option "]):
+            final_chunks.append(chunk)
+        # Otherwise, if it's normal text and too long, split it cleanly
+        elif len(chunk.page_content) > 700:
+            split_chunks = recursive_splitter.split_documents([chunk])
+            final_chunks.extend(split_chunks)
+        else:
+            final_chunks.append(chunk)
+
+    chunks = final_chunks 
     # Filter out empty or very short chunks (e.g. the title block)
     chunks = [c for c in chunks if len(c.page_content.strip()) > 50]
 
