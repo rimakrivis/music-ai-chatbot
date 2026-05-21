@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   format, startOfWeek, addDays, isSameDay, parseISO,
   addWeeks, subWeeks, isToday, isSameWeek
@@ -40,35 +40,17 @@ export default function WeeklyAgenda({
 }: WeeklyAgendaProps) {
   const [currentWeek, setCurrentWeek] = useState(new Date());
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
-
-  // Automatically focus the calendar week on the first available AI event
   const [hasFocused, setHasFocused] = useState(false);
-  
-  if (events.length > 0 && !hasFocused) {
-    const firstEventDate = parseISO(events[0].date);
-    setCurrentWeek(firstEventDate);
-    setHasFocused(true);
-  }
 
-  // Automatically focus the calendar week on the first available AI event
-  const [hasFocused, setHasFocused] = useState(false);
-  
-  if (events.length > 0 && !hasFocused) {
-    const firstEventDate = parseISO(events[0].date);
-    setCurrentWeek(firstEventDate);
-    setHasFocused(true);
-  }
+  // Jump to the week of the first event when events first load
+  useEffect(() => {
+    if (events.length > 0) {
+      const firstEventDate = parseISO(events[0].date);
+      setCurrentWeek(firstEventDate);
+    }
+  }, [events]);
 
-  // Automatically focus the calendar week on the first available AI event
-  const [hasFocused, setHasFocused] = useState(false);
-  
-  if (events.length > 0 && !hasFocused) {
-    const firstEventDate = parseISO(events[0].date);
-    setCurrentWeek(firstEventDate);
-    setHasFocused(true);
-  }
-
-  const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 }); // Monday
+  const weekStart = startOfWeek(currentWeek, { weekStartsOn: 1 });
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
   const eventsOnDay = (day: Date) =>
@@ -128,7 +110,6 @@ export default function WeeklyAgenda({
             </h2>
           </div>
           <div className="flex items-center gap-3">
-            {/* Legend */}
             <div className="hidden md:flex items-center gap-3">
               {Object.entries(TYPE_CONFIG).slice(0, 5).map(([type, cfg]) => (
                 <div key={type} className="flex items-center gap-1.5">
@@ -160,14 +141,11 @@ export default function WeeklyAgenda({
         {/* Scrollable time grid */}
         <div className="flex-1 overflow-y-auto">
           <div className="grid grid-cols-8 relative">
-            {/* Hour rows */}
             {HOURS.map((hour) => (
               <div key={hour} className="contents">
-                {/* Time label */}
                 <div className="py-3 px-2 text-slate-300 text-xs text-right pr-4 border-t border-slate-100 h-16 flex items-start pt-2">
                   {hour === 0 ? "" : `${hour}:00`}
                 </div>
-                {/* Day cells */}
                 {weekDays.map((day) => {
                   const dayEvents = eventsOnDay(day);
                   const todayDay = isToday(day);
@@ -177,7 +155,6 @@ export default function WeeklyAgenda({
                       className={`border-t border-l border-slate-100 h-16 relative px-1 py-1
                         ${todayDay ? "bg-violet-50/30" : ""}`}
                     >
-                      {/* Show events at 9am slot if no time specified */}
                       {hour === 9 && dayEvents.map((event) => {
                         const cfg = TYPE_CONFIG[event.type] || TYPE_CONFIG.general;
                         return (
@@ -204,7 +181,7 @@ export default function WeeklyAgenda({
         </div>
       </div>
 
-      {/* Event chat panel — slides in from right */}
+      {/* Event chat panel */}
       {selectedEvent && (
         <div className="w-96 shrink-0 border-l border-slate-200 flex flex-col overflow-hidden">
           <EventChatPanel

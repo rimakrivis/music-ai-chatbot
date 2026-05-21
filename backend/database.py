@@ -92,7 +92,15 @@ async def update_calendar_event(event_id: int, updates: dict) -> bool:
     except Exception as e:
         print(f"❌ Error updating calendar event: {e}")
         raise
-
+async def delete_session_data(session_id: str) -> bool:
+    try:
+        supabase = get_supabase()
+        supabase.table("calendar_events").delete().eq("session_id", session_id).execute()
+        supabase.table("todos").delete().eq("session_id", session_id).execute()
+        return True
+    except Exception as e:
+        print(f"❌ delete_session_data error: {e}")
+        return False
 
 async def delete_calendar_event(event_id: int) -> bool:
     """Delete a calendar event by id."""

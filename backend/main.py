@@ -16,6 +16,8 @@ Startup behaviour:
 """
 
 from contextlib import asynccontextmanager
+import os
+import tempfile
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +25,7 @@ from pydantic import BaseModel
 from datetime import date
 import json
 from openai import AsyncOpenAI
-from database import create_tables, save_calendar_events, get_calendar_events, update_calendar_event, delete_calendar_event, save_todos, get_todos, update_todo, delete_todo
+from database import create_tables, save_calendar_events, get_calendar_events, update_calendar_event, delete_calendar_event, save_todos, get_todos, update_todo, delete_todo, delete_session_data
 
 from seed_knowledge import seed_knowledge_file
 from config import validate_config, IS_PRODUCTION, ENVIRONMENT
@@ -441,9 +443,20 @@ async def analyze_audio(
             speech_models=["universal-3-pro", "universal-2"]
         )
 
-        print("   Uploading and transcribing file via AssemblyAI SDK...")
-        # The SDK automatically handles reading bytes, uploading, and polling!
-        transcript = transcriber.transcribe(file_bytes, config=config)
+        print("   Saving audio to temp file for AssemblyAI...")
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+
+        print(f"   Transcribing via AssemblyAI SDK: {tmp_path}")
+        transcript = transcriber.transcribe(tmp_path, config=config)
+
+        # Clean up temp file
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
 
         if transcript.status == aai.TranscriptStatus.error:
             raise RuntimeError(f"AssemblyAI error: {transcript.error}")
@@ -513,6 +526,14 @@ async def edit_calendar_event(event_id: int, request: dict):
         print(f"❌ Error in PATCH /calendar/events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/session/{session_id}")
+async def delete_session(session_id: str):
+    try:
+        deleted = await delete_session_data(session_id)
+        return {"deleted": deleted, "status": "ok"}
+    except Exception as e:
+        print(f"❌ Error in DELETE /session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/calendar/events/{event_id}")
 async def remove_calendar_event(event_id: int):
@@ -521,6 +542,14 @@ async def remove_calendar_event(event_id: int):
         return {"deleted": deleted, "status": "ok"}
     except Exception as e:
         print(f"❌ Error in DELETE /calendar/events: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+@app.delete("/todos/session/{session_id}")
+async def delete_session_todos(session_id: str):
+    try:
+        await supabase_client.table("todos").delete().eq("session_id", session_id).execute()
+        return {"status": "ok"}
+    except Exception as e:
+        print(f"❌ Error deleting session todos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

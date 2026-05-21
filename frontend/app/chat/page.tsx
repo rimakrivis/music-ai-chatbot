@@ -8,6 +8,7 @@ import TranscriptPanel from "@/components/TranscriptPanel";
 import CalendarPanel from "@/components/CalendarPanel";
 import TodoList from "@/components/TodoList";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
+import { ExtractedTasks } from "@/lib/types";
 import WeeklyAgenda from "@/components/WeeklyAgenda";
 import { sendMessage } from "@/lib/api";
 
@@ -19,10 +20,6 @@ const STARTER_PROMPTS = [
   "When should this song be released and on which platforms?",
 ];
 
-interface ExtractedTasks {
-  calendar_events: { title: string; date: string; type: string }[];
-  todo_items: { title: string; due_date: string | null }[];
-}
 
 interface MessageWithTasks extends Message {
   tasks?: ExtractedTasks;
@@ -44,16 +41,15 @@ function ChatPageInner() {
   const video_title = searchParams.get("title") || "Unknown Video";
   const video_channel = searchParams.get("channel") || "";
 
-  const [sessionId, setSessionId] = useState<string>("");
-
-  useEffect(() => {
+  const [sessionId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
     let stored = localStorage.getItem("music_ai_session_id");
     if (!stored) {
       stored = crypto.randomUUID();
       localStorage.setItem("music_ai_session_id", stored);
     }
-    setSessionId(stored);
-  }, []);
+    return stored;
+  });
 
   const [messages, setMessages] = useState<MessageWithTasks[]>([]);
   const [loading, setLoading] = useState(false);
@@ -76,9 +72,11 @@ function ChatPageInner() {
   // Fetch events for weekly agenda
   useEffect(() => {
     async function fetchAgendaEvents() {
+      console.log("🔍 fetching with sessionId:", sessionId);
       try {
         const res = await fetch(`${API}/calendar/events/${sessionId}`);
         const data = await res.json();
+        console.log("📅 agenda events:", data);
         setAgendaEvents(data.events || []);
       } catch (e) {
         console.error("Failed to fetch agenda events", e);
@@ -132,13 +130,6 @@ function ChatPageInner() {
     );
   }
 
-  if (!sessionId) {
-    return (
-      <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">
-        Loading session…
-      </div>
-    );
-  }
 
   if (!video_id) return null;
 

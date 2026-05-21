@@ -12,9 +12,16 @@ export interface TodoItem {
   completed: boolean;
 }
 
+export interface ExtractedTasks {
+  calendar_events: { title: string; date: string; type: string }[];
+  todo_items: { title: string; due_date: string | null }[];
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  tasks?: ExtractedTasks;
+  tasksConfirmed?: boolean;
 }
 
 export interface DotDate {

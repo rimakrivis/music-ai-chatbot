@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useCallback,useEffect } from "react";
-import { v4 as uuidv4 } from "uuid";
+import { useState, useCallback, useEffect } from "react";
 import MiniCalendar from "@/components/dashboard/MiniCalendar";
 import TodoListPanel from "@/components/dashboard/TodoListPanel";
 import ProgressBar from "@/components/dashboard/ProgressBar";
@@ -9,29 +8,27 @@ import DailyFeed from "@/components/dashboard/DailyFeed";
 import UploadPanel from "@/components/dashboard/UploadPanel";
 import AIChatbot from "@/components/dashboard/AIChatbot";
 import EventDrawer from "@/components/dashboard/EventDrawer";
+import TaskConfirmationCard from "@/components/TaskConfirmationCard";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
 import { sendMessage, AnalyzeResponse } from "@/lib/api";
 
-// Stable session ID for this browser session
-// Uses the exact same key as the chat page
-const SESSION_ID = typeof window !== "undefined"
-  ? (localStorage.getItem("music_ai_session_id") ?? "")
-  : "";
-
 export default function DashboardPage() {
-  const [sessionId, setSessionId] = useState<string>("");
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      let id = localStorage.getItem("music_ai_session_id");
-      if (!id) {
-        id = uuidv4();
-        localStorage.setItem("music_ai_session_id", id);
-      }
-      setSessionId(id);
+  const [sessionId] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    let stored = localStorage.getItem("music_ai_session_id");
+    if (!stored) {
+      stored = crypto.randomUUID();
+      localStorage.setItem("music_ai_session_id", stored);
     }
-  }, []);
-  const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(null);
+    return stored;
+  });
+
+  const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = localStorage.getItem("music_ai_last_video");
+    return stored ? JSON.parse(stored) : null;
+  });
+
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -43,18 +40,53 @@ export default function DashboardPage() {
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
 
-  // Called when UploadPanel successfully analyzes a video
+  const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const loadFromSupabase = useCallback(async () => {
+    try {
+      const [eventsRes, todosRes] = await Promise.all([
+        fetch(`${API}/calendar/events/${sessionId}`),
+        fetch(`${API}/todos/${sessionId}`),
+      ]);
+      const eventsData = await eventsRes.json();
+      const todosData = await todosRes.json();
+
+      if (eventsData.events?.length > 0) {
+        setEvents(eventsData.events.map((e: any) => ({
+          id: e.id,
+          title: e.title,
+          date: e.date,
+          type: e.type,
+        })));
+        console.log("[page] Loaded", eventsData.events.length, "events from Supabase");
+      }
+      if (todosData.items?.length > 0) {
+        setTodos(todosData.items.map((t: any) => ({
+          id: t.id,
+          title: t.title,
+          completed: t.status === "done",
+        })));
+        console.log("[page] Loaded", todosData.items.length, "todos from Supabase");
+      }
+    } catch (e) {
+      console.error("[page] Failed to load from Supabase", e);
+    }
+  }, [sessionId, API]);
+
+  useEffect(() => {
+    if (sessionId) loadFromSupabase();
+  }, [sessionId, loadFromSupabase]);
+
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
     console.log("[page] Video loaded:", video.title);
+    localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
-    // Reset chat with a welcome message for this song
     setChatMessages([
       {
         role: "assistant",
         content: `✅ Loaded **"${video.title}"** by ${video.channel}. I've indexed the transcript (${video.word_count} words). Ask me anything — lyrics, marketing plan, release timing, or Spotify stats!`,
       },
     ]);
-    // Clear previous events/todos from last song
     setEvents([]);
     setTodos([]);
   }, []);
@@ -76,6 +108,19 @@ export default function DashboardPage() {
     setSelectedEvent(null);
   };
 
+  function handleTaskConfirm(msgIndex: number) {
+    setChatMessages((prev) =>
+      prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
+    );
+    loadFromSupabase();
+  }
+
+  function handleTaskDismiss(msgIndex: number) {
+    setChatMessages((prev) =>
+      prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
+    );
+  }
+
   const handleSendMessage = async (message: string) => {
     if (!videoInfo) {
       setChatMessages((prev) => [
@@ -86,7 +131,6 @@ export default function DashboardPage() {
       return;
     }
 
-    // Add user message immediately
     setChatMessages((prev) => [...prev, { role: "user", content: message }]);
     setIsChatLoading(true);
     console.log("[page] Sending message to agent:", message);
@@ -107,34 +151,21 @@ export default function DashboardPage() {
         todo_items: data.todo_items?.length ?? 0,
       });
 
-      // Add assistant response
+      const hasTasks =
+        (data.calendar_events && data.calendar_events.length > 0) ||
+        (data.todo_items && data.todo_items.length > 0);
+
       setChatMessages((prev) => [
         ...prev,
-        { role: "assistant", content: data.response },
+        {
+          role: "assistant",
+          content: data.response,
+          tasks: hasTasks
+            ? { calendar_events: data.calendar_events || [], todo_items: data.todo_items || [] }
+            : undefined,
+          tasksConfirmed: false,
+        },
       ]);
-
-      // Append any new calendar events returned by the agent
-      if (data.calendar_events && data.calendar_events.length > 0) {
-        const newEvents: CalendarEvent[] = data.calendar_events.map((e, i) => ({
-          id: Date.now() + i,
-          title: e.title,
-          date: e.date,
-          type: (e.type as CalendarEvent["type"]) || "general",
-        }));
-        console.log("[page] Adding", newEvents.length, "calendar events");
-        setEvents((prev) => [...prev, ...newEvents]);
-      }
-
-      // Append any new todos returned by the agent
-      if (data.todo_items && data.todo_items.length > 0) {
-        const newTodos: TodoItem[] = data.todo_items.map((t, i) => ({
-          id: Date.now() + i + 1000,
-          title: t.title,
-          completed: false,
-        }));
-        console.log("[page] Adding", newTodos.length, "todos");
-        setTodos((prev) => [...prev, ...newTodos]);
-      }
 
     } catch (err) {
       console.error("[page] Chat error:", err);
@@ -150,20 +181,25 @@ export default function DashboardPage() {
     }
   };
 
-  // Build dot dates for MiniCalendar from real events
-  const calendarDotDates = events.map((e) => {
-    const day = parseInt(e.date.split("-")[2], 10);
-    const colorMap: Record<string, string> = {
-      release: "purple",
-      spotify: "green",
-      youtube: "red",
-      social_media: "blue",
-      promo: "orange",
-      deadline: "rose",
-      general: "slate",
-    };
-    return { date: day, color: colorMap[e.type] ?? "slate" };
-  });
+  const now = new Date();
+  const calendarDotDates = events
+    .filter((e) => {
+      const d = new Date(e.date + "T00:00:00");
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+    })
+    .map((e) => {
+      const day = parseInt(e.date.split("-")[2], 10);
+      const colorMap: Record<string, string> = {
+        release: "purple",
+        spotify: "green",
+        youtube: "red",
+        social_media: "blue",
+        promo: "orange",
+        deadline: "rose",
+        general: "slate",
+      };
+      return { date: day, color: colorMap[e.type] ?? "slate" };
+    });
 
   return (
     <div className="min-h-screen bg-[#f7f5f2] p-6">
@@ -195,6 +231,19 @@ export default function DashboardPage() {
             messages={chatMessages}
             onSendMessage={handleSendMessage}
             isLoading={isChatLoading}
+            renderTaskCard={(msg, i) => {
+              if (!msg.tasks || msg.tasksConfirmed) return null;
+              return (
+                <TaskConfirmationCard
+                  sessionId={sessionId}
+                  videoId={videoInfo?.video_id ?? ""}
+                  calendarEvents={msg.tasks.calendar_events}
+                  todoItems={msg.tasks.todo_items}
+                  onConfirm={() => handleTaskConfirm(i)}
+                  onDismiss={() => handleTaskDismiss(i)}
+                />
+              );
+            }}
           />
         </aside>
       </div>
@@ -204,6 +253,22 @@ export default function DashboardPage() {
         event={selectedEvent}
         onClose={handleCloseDrawer}
       />
+  {/* Reset session button — subtle, bottom left */}
+      <button
+        onClick={async () => {
+          await fetch(`${API}/session/${sessionId}`, { method: "DELETE" });
+          setEvents([]);
+          setTodos([]);
+          setChatMessages([{
+            role: "assistant",
+            content: "Session cleared. Paste a YouTube URL to start fresh.",
+          }]);
+        }}
+        className="fixed bottom-4 left-4 text-xs text-slate-300 hover:text-rose-400 transition-colors"
+        title="Clear session"
+      >
+        ↺ reset
+      </button>
     </div>
   );
-}
+}  

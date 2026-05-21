@@ -85,7 +85,7 @@ export default function TaskConfirmationCard({
       {calendarEvents.length > 0 && (
         <div className="mb-3">
           <p className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-2">📅 Calendar Events</p>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
             {calendarEvents.map((event, i) => (
               <label key={i} className={`flex items-center gap-2.5 p-2.5 rounded-xl cursor-pointer transition-colors
                 ${selectedEvents[i] ? "bg-violet-50 border border-violet-100" : "bg-slate-50 border border-slate-100"}`}>
@@ -112,7 +112,7 @@ export default function TaskConfirmationCard({
       {todoItems.length > 0 && (
         <div className="mb-4">
           <p className="text-slate-500 text-xs font-medium uppercase tracking-wider mb-2">✅ Tasks</p>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-1.5 max-h-40 overflow-y-auto pr-1">
             {todoItems.map((item, i) => (
               <label key={i} className={`flex items-center gap-2.5 p-2.5 rounded-xl cursor-pointer transition-colors
                 ${selectedTodos[i] ? "bg-violet-50 border border-violet-100" : "bg-slate-50 border border-slate-100"}`}>

@@ -99,7 +99,7 @@ export default function DailyFeed({ events, onEventClick }: DailyFeedProps) {
   return (
     <div className="flex flex-col">
       {/* Header */}
-      <h1 className="text-3xl font-bold text-slate-800 mb-8">May 2025 Dashboard</h1>
+      <h1 className="text-3xl font-bold text-slate-800 mb-8">Daily Dashboard</h1>
 
       {/* Daily sections */}
       <div className="flex flex-col gap-6">
