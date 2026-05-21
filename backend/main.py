@@ -366,6 +366,59 @@ async def chat(request: ChatRequest):
         print(f"   ❌ /chat error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
 
+@app.post("/event-chat")
+async def event_chat(request: dict):
+    """
+    Dedicated chat for the EventDrawer panel.
+    Skips the LangChain agent — uses GPT-4o directly with a
+    creative/tutorial system prompt focused on a specific calendar task.
+    """
+    message = request.get("message", "")
+    event_title = request.get("event_title", "")
+    event_type = request.get("event_type", "general")
+    event_date = request.get("event_date", "")
+    video_title = request.get("video_title", "")
+    video_channel = request.get("video_channel", "")
+    doc_content = request.get("doc_content", "")
+
+    print(f"\n📥 [/event-chat] Task: '{event_title}' | Message: '{message[:60]}'")
+
+    if not message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+
+    system_prompt = f"""You are a music industry creative assistant helping an artist execute a specific marketing task.
+
+Current task: "{event_title}" (type: {event_type}, scheduled: {event_date})
+Artist/Song: "{video_title}" by {video_channel}
+
+Your role:
+- Give specific, actionable creative guidance for THIS task
+- Write ready-to-use content when asked (captions, pitches, emails, scripts)
+- Give platform-specific tutorials and best practices
+- Be concise and practical — artists are busy
+- Format output cleanly so it can be copied and used directly
+
+{f'Previously saved notes for this task: {doc_content[:500]}' if doc_content else ''}
+
+Do NOT give generic advice. Everything must be specific to this task, this artist, and this song."""
+
+    try:
+        client = AsyncOpenAI()
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message},
+            ],
+            temperature=0.7,
+        )
+        reply = response.choices[0].message.content.strip()
+        print(f"   ✅ Event chat response ({len(reply)} chars)")
+        return {"response": reply}
+
+    except Exception as e:
+        print(f"   ❌ /event-chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"Event chat failed: {str(e)}")
 
 @app.get("/transcript/{video_id}", response_model=TranscriptResponse)
 async def get_transcript(video_id: str):

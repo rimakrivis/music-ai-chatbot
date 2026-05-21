@@ -126,15 +126,17 @@ export default function EventDrawer({
         .filter(Boolean)
         .join("\n");
 
-      const res = await fetch(`${API_URL}/chat`, {
+      const res = await fetch(`${API_URL}/event-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          video_id: videoId ?? "",
-          message: contextPrefix,
-          session_id: sessionId,
-          video_title: videoTitle ?? event.title,
-          channel: videoChannel ?? "",
+          message: userMessage,
+          event_title: event.title,
+          event_type: event.type,
+          event_date: event.date,
+          video_title: videoTitle ?? "",
+          video_channel: videoChannel ?? "",
+          doc_content: docContent,
         }),
       });
 
