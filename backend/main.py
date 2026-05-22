@@ -89,16 +89,17 @@ class ChatResponse(BaseModel):
 agent_state = {}
 
 
+# backend/main.py
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Runs once when the server starts, before accepting any requests.
 
     Order:
-      1. Validate all required environment variables (crash early if missing)
-      2. In production: seed marketing knowledge into ChromaDB (EphemeralClient
-         loses all data on restart, so we must re-seed every boot)
-      3. Create the LangChain agent (expensive — done once, reused forever)
+      1. Validate all required environment variables.
+      2. Create database tables.
+      3. Create the LangChain agent once.
     """
     print("\n🚀 [startup] Starting Music AI backend...")
     print(f"🚀 [startup] Environment: {ENVIRONMENT}")
@@ -110,23 +111,9 @@ async def lifespan(app: FastAPI):
         print(f"🚀 [startup] FATAL: {e}")
         raise
 
-    # Step 2 — seed marketing knowledge in production
-    if IS_PRODUCTION:
-        print("🚀 [startup] Production mode — seeding marketing knowledge base...")
-        try:
-            from seed_knowledge import seed_knowledge_file
-            seed_knowledge_file(
-                filename="marketing_knowledge.md",
-                namespace="marketing_knowledge",
-            )
-            print("🚀 [startup] Marketing knowledge seeded ✓")
-        except Exception as e:
-            # Non-fatal: app still works without the knowledge base
-            print(f"🚀 [startup] WARNING: Could not seed marketing knowledge: {e}")
-    else:
-        print("🚀 [startup] Local mode — skipping knowledge seed (run seed_knowledge.py manually)")
+    print("🚀 [startup] Production mode — skipping active knowledge seed (relying on persistent Pinecone)")
 
-    # Step 2.5 — create database tables
+    # Step 2 — create database tables
     await create_tables()
 
     # Step 3 — create agent
@@ -136,8 +123,6 @@ async def lifespan(app: FastAPI):
     yield
 
     print("\n[shutdown] Music AI backend shutting down")
-
-
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
