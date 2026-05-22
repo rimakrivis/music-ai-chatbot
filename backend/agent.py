@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from tools.search_transcript import search_transcript
 from tools.extract_lyrics import extract_lyrics
-from tools.analyze_marketing import analyze_marketing_potential
+from tools.analyze_marketing import analyze_marketing_potential, extract_audio_features
 from tools.get_artist_info import get_artist_info
 from tools.find_release_timing import find_release_timing
 from tools.search_marketing_knowledge import search_marketing_knowledge
@@ -36,6 +36,7 @@ TOOLS = [
     get_artist_info,
     find_release_timing,
     search_marketing_knowledge,
+    extract_audio_features,
 ]
 
 # ---------------------------------------------------------------------------
@@ -87,10 +88,16 @@ Never skip this. Never answer marketing questions from memory alone.
 MANDATORY TOOL CALL ORDER:
 
 1. MARKETING PLAN / STRATEGY:
-   STEP 1 → search_marketing_knowledge(query=<user question summarized>)
-   STEP 2 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
-   STEP 3 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 2 result>)
-   STEP 4 → find_release_timing(genre=<from step 2>, audience_size=<known or ask>)
+   IF INPUT IS YOUTUBE LINK:
+  STEP 1 → download_youtube_audio(video_id="{video_id}") -> Returns local_file_path
+  STEP 2 → extract_audio_features(file_path=<local_file_path from STEP 1>)
+  STEP 3 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
+  STEP 4 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<STEP 3>, audio_features=<STEP 2>)
+
+IF INPUT IS DIRECT AUDIO FILE (MP3 / WAV):
+  STEP 1 → extract_audio_features(file_path="{user_uploaded_file_path}")
+  STEP 2 → generate_transcript_from_audio(file_path="{user_uploaded_file_path}")  # or use empty string if not available
+  STEP 3 → analyze_marketing_potential(video_id="local_file", transcript_text=<STEP 2>, audio_features=<STEP 1>)
 
 2. RELEASE STRATEGY / TIMELINE / DEADLINES:
    STEP 1 → search_marketing_knowledge(query=<user question>)

@@ -159,3 +159,4 @@ yt-dlp==2026.3.17
 zipp==3.23.1
 zstandard==0.25.0
 python-multipart
+librosa>=0.10.0

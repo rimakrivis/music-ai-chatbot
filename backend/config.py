@@ -16,7 +16,7 @@ OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 # --- xAI (Grok) ---
 XAI_API_KEY: str = os.getenv("XAI_API_KEY", "")
 GROK_MODEL: str = "grok-4.3"
-GROK_REASONING_EFFORT: str = "medium"
+GROK_REASONING_EFFORT: str = "low"
 GROK_TEMPERATURE: float = 0.7
 
 # --- Spotify ---
@@ -51,7 +51,7 @@ def validate_config() -> None:
     Called once at app startup. Raises ValueError on missing keys.
     """
     required = {
-        "OPENAI_API_KEY": OPENAI_API_KEY,
+        "XAI_API_KEY": XAI_API_KEY,
         "SPOTIFY_CLIENT_ID": SPOTIFY_CLIENT_ID,
         "SPOTIFY_CLIENT_SECRET": SPOTIFY_CLIENT_SECRET,
         "ASSEMBLYAI_API_KEY": ASSEMBLYAI_API_KEY,

@@ -506,6 +506,145 @@ async def analyze_audio(
     artist: str = Form("Unknown Artist")
 ):
     """
+    Accepts an MP3 or WAV file, transcribes via Grok (xAI Whisper-compatible),
+    runs librosa for audio features, and embeds into Pinecone.
+
+    Grok is used instead of AssemblyAI for uploaded files because:
+      - Already in the stack (no extra API key)
+      - Handles multilingual audio well
+      - AssemblyAI is kept only as YouTube fallback
+    """
+    print(f"\n📥 [/analyze-audio] File: {file.filename} | Session: {session_id}")
+
+    # 1. Validate file format
+    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
+    if ext not in ["mp3", "wav", "m4a", "ogg", "flac"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Supported formats: MP3, WAV, M4A, OGG, FLAC."
+        )
+
+    # 2. Read file bytes
+    try:
+        file_bytes = await file.read()
+        if len(file_bytes) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        print(f"   File size: {len(file_bytes) / 1024 / 1024:.2f} MB")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read audio file: {str(e)}")
+
+    # 3. Generate stable internal ID from session + filename
+    import hashlib
+    generated_video_id = hashlib.md5(
+        f"{session_id}_{file.filename}".encode()
+    ).hexdigest()[:11]
+    print(f"   Generated video_id: {generated_video_id}")
+
+    # 4. Save to temp file — needed for both Grok and librosa
+    import tempfile as tf
+    tmp_path = None
+    try:
+        with tf.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        print(f"   Saved to temp: {tmp_path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save temp file: {str(e)}")
+
+    transcript_text = ""
+    audio_features = {}
+
+    try:
+        # 5a. Extract audio features with librosa (runs on temp file)
+        print(f"   Running librosa on uploaded file...")
+        from pipeline import extract_audio_features
+        audio_features = extract_audio_features(tmp_path)
+
+        # 5b. Transcribe with Grok via OpenAI-compatible audio endpoint
+        print(f"   Transcribing with Grok...")
+        from config import XAI_API_KEY
+        from openai import AsyncOpenAI
+
+        xai_client = AsyncOpenAI(
+            api_key=XAI_API_KEY,
+            base_url="https://api.x.ai/v1",
+        )
+
+        with open(tmp_path, "rb") as audio_file:
+            transcription = await xai_client.audio.transcriptions.create(
+                model="grok-whisper-1",        # xAI's Whisper-compatible model
+                file=(file.filename, audio_file, f"audio/{ext}"),
+                response_format="text",
+            )
+
+        transcript_text = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
+        word_count = len(transcript_text.split())
+        print(f"   ✅ Grok transcription: {word_count} words")
+
+    except Exception as e:
+        print(f"   ❌ Grok transcription failed: {str(e)}")
+        # Fallback to AssemblyAI if Grok transcription fails
+        print(f"   Falling back to AssemblyAI...")
+        try:
+            import assemblyai as aai
+            aai_key = os.getenv("ASSEMBLYAI_API_KEY")
+            if not aai_key:
+                raise ValueError("ASSEMBLYAI_API_KEY not set and Grok transcription failed.")
+
+            aai.settings.api_key = aai_key
+            config = aai.TranscriptionConfig(language_detection=True)
+            transcriber = aai.Transcriber(config=config)
+            aai_transcript = transcriber.transcribe(tmp_path)
+
+            if aai_transcript.status == aai.TranscriptStatus.error:
+                raise RuntimeError(f"AssemblyAI error: {aai_transcript.error}")
+
+            transcript_text = aai_transcript.text.strip()
+            word_count = len(transcript_text.split())
+            print(f"   ✅ AssemblyAI fallback transcription: {word_count} words")
+        except Exception as fallback_err:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Transcription failed. Grok: {str(e)} | AssemblyAI fallback: {str(fallback_err)}"
+            )
+    finally:
+        # Always clean up temp file
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+                print(f"   Cleaned up temp file")
+            except Exception:
+                pass
+
+    if not transcript_text:
+        raise HTTPException(status_code=422, detail="Transcription returned empty text.")
+
+    # 6. Chunk and embed into Pinecone
+    try:
+        embed_data = chunk_and_embed(
+            video_id=generated_video_id,
+            transcript_text=transcript_text,
+            session_id=session_id
+        )
+        print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
+    except Exception as e:
+        print(f"   ❌ Embedding failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
+
+    return {
+        "video_id": generated_video_id,
+        "transcript_text": transcript_text,
+        "word_count": len(transcript_text.split()),
+        "title": title,
+        "artist": artist,
+        "channel": artist,
+        "chunks_created": embed_data.get("chunks_created", 0),
+        "audio_features": audio_features,   # BPM, energy, key — frontend can display these
+        "status": "success"
+    }
+    """
     Accepts an MP3 or WAV file, sends it to AssemblyAI for transcription,
     and embeds the resulting text into Pinecone.
     """
