@@ -37,20 +37,81 @@ llm = ChatOpenAI(
 print(f"[analyze_marketing] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT} ✓")
 
 
-def _search_knowledge(query: str) -> str:
-    try:
-        kb = PineconeVectorStore(
-            index_name=PINECONE_INDEX_NAME,
-            embedding=embeddings,
-            namespace="marketing_knowledge",
+@tool
+def analyze_marketing_potential(
+    video_id: str,
+    transcript_text: str,
+    audio_features: str = "",
+    spotify_genres: str = "",
+) -> str:
+    """
+    Analyze the marketing potential of a song based on its transcript content and audio features.
+    """
+    print(f"\n📊 [analyze_marketing_potential] Analyzing video: {video_id}")
+
+    if not transcript_text or len(transcript_text.strip()) < 30:
+        return (
+            "⚠️ transcript_text is empty or too short to analyze. "
+            "Please call search_transcript first with a query like "
+            "'mood energy genre chorus feeling' and pass the result here."
         )
-        results = kb.similarity_search(query, k=3)
-        knowledge = "\n\n".join([doc.page_content for doc in results])
-        print(f"   📚 Retrieved {len(results)} marketing knowledge chunks")
-        return knowledge
+
+    # Parse audio_features if passed as JSON string from agent
+    parsed_audio = {}
+    if audio_features:
+        try:
+            import json
+            parsed_audio = json.loads(audio_features)
+        except Exception:
+            pass
+
+    audio_features_block = _format_audio_features(parsed_audio)
+
+    # Spotify genres block
+    spotify_block = ""
+    if spotify_genres:
+        spotify_block = f"SPOTIFY ARTIST GENRES:\n{spotify_genres}"
+
+    # OPTIMIZED: Removed redundant vector DB searches. 
+    # Transcript is still passed directly below.
+    system_prompt = """You are DropOperator AI — an expert music analyst.
+Base genre and mood conclusions on ALL available signals: transcript, audio features, and Spotify genres.
+Always respond in the same language the user writes in."""
+
+    user_message = f"""Analyze this song and return a brief with EXACTLY these sections:
+
+GENRE & SUBGENRE:
+MOOD & ENERGY:
+TARGET AUDIENCE:
+TIKTOK / REELS POTENTIAL:
+STRONGEST HOOK MOMENT:
+RECOMMENDED LEAD PLATFORM:
+PLATFORM PRIORITY ORDER:
+COMMERCIAL APPEAL:
+
+---
+{audio_features_block}
+
+{spotify_block}
+
+TRANSCRIPT CONTENT:
+{transcript_text}
+
+GENRE REASONING INSTRUCTIONS:
+- Use BPM + energy as the primary signal for subgenre.
+- If lyrics language is not English, factor language into subgenre.
+- Always name both a GENRE and a SUBGENRE (e.g. "Hip-hop / UK Drill")."""
+
+    try:
+        response = llm.invoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_message)
+        ])
+        analysis = response.content.strip()
+        print(f"   ✅ Marketing analysis complete (Tokens saved!)")
+        return analysis
     except Exception as e:
-        print(f"   ⚠️ marketing_knowledge not available: {str(e)}")
-        return ""
+        return f"Error analyzing marketing potential: {str(e)}"
 
 
 def _format_audio_features(audio_features: dict) -> str:

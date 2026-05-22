@@ -36,7 +36,6 @@ TOOLS = [
     get_artist_info,
     find_release_timing,
     search_marketing_knowledge,
-    extract_audio_features,
 ]
 
 # ---------------------------------------------------------------------------
@@ -47,7 +46,15 @@ checkpointer = InMemorySaver()
 # ---------------------------------------------------------------------------
 # System prompt builder
 # ---------------------------------------------------------------------------
-def _build_system_prompt(video_id: str, video_title: str = "", video_channel: str = "") -> str:
+# ---------------------------------------------------------------------------
+# System prompt builder
+# ---------------------------------------------------------------------------
+def _build_system_prompt(
+    video_id: str, 
+    video_title: str = "", 
+    video_channel: str = "",
+    audio_features_text: str = ""
+) -> str:
     video_context = f"video ID: {video_id}"
     if video_title:
         video_context += f' | title: "{video_title}"'
@@ -61,14 +68,27 @@ CURRENT VIDEO:
 {video_context}
 Always pass video_id={video_id} to any tool that requires it.
 
+AUDIO ANALYSIS FACTS (Provided by backend system):
+{audio_features_text if audio_features_text else "No raw audio data available for this track."}
+
+CRITICAL BOUNDARIES & INTENT RECOGNITION:
+You must strictly answer ONLY what the user explicitly asks. Do not over-generate.
+- If user asks for GENRE or MOOD -> Only answer with the musical analysis. DO NOT generate marketing plans or dates.
+- If user asks for MARKETING PLAN -> Proceed with the full marketing pipeline.
+
+DROPOPERATOR TASK ROUTING:
+When discussing specific action items (e.g. after a marketing plan), you MUST suggest which Calendar Event the user should open:
+- Cover art/photoshoots -> "Cover Art Deadline"
+- Press release/Bio -> "Prepare PR Release"
+- Playlist pitching -> "Spotify Pitch"
+- Social media content -> "Social Media / Promo"
+- Distribution -> "Release Upload"
+
 TEMPLATE VARIABLES — use these exactly when filling in any template:
 - Song Title: "{video_title}"
 - Artist Name: "{video_channel}"
 - YouTube Link: "https://www.youtube.com/watch?v={video_id}"
-- Spotify Link: ask the user "Do you have a Spotify pre-save or release link?" BEFORE generating any template that includes it. Never leave [Spotify Link] blank or invented.
-Never leave [Song Title], [Artist Name], or [YouTube Link] as placeholders — you already have this data.
-
-SCOPE: Only answer music-related questions. Politely decline anything else.
+- Spotify Link: ask the user "Do you have a Spotify pre-save or release link?" BEFORE generating any template.
 
 TOOLS:
 - search_transcript → search song content, themes, mood, lyrics
@@ -76,47 +96,23 @@ TOOLS:
 - analyze_marketing_potential → requires transcript_text from search_transcript
 - get_artist_info → Spotify stats, popularity, top tracks, genres
 - find_release_timing → release date strategy, teaser schedule
-- search_marketing_knowledge → YOUR PRIMARY KNOWLEDGE SOURCE. Call this first for any marketing, release, social media, playlist, radio, press, budget, or deadline question. Never answer these from general knowledge — always check this tool first.
-
-KNOWLEDGE BASE FIRST — CRITICAL RULE:
-For ANY marketing, release, social media, playlist, radio, press, budget, or deadline question:
-ALWAYS call search_marketing_knowledge FIRST.
-If it returns relevant content → use it as primary source.
-If nothing relevant → then use general knowledge.
-Never skip this. Never answer marketing questions from memory alone.
+- search_marketing_knowledge → YOUR PRIMARY KNOWLEDGE SOURCE.
 
 MANDATORY TOOL CALL ORDER:
 
-1. MARKETING PLAN / STRATEGY:
-   IF INPUT IS YOUTUBE LINK:
-  STEP 1 → download_youtube_audio(video_id="{video_id}") -> Returns local_file_path
-  STEP 2 → extract_audio_features(file_path=<local_file_path from STEP 1>)
-  STEP 3 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
-  STEP 4 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<STEP 3>, audio_features=<STEP 2>)
-
-IF INPUT IS DIRECT AUDIO FILE (MP3 / WAV):
-  STEP 1 → extract_audio_features(file_path="{user_uploaded_file_path}")
-  STEP 2 → generate_transcript_from_audio(file_path="{user_uploaded_file_path}")  # or use empty string if not available
-  STEP 3 → analyze_marketing_potential(video_id="local_file", transcript_text=<STEP 2>, audio_features=<STEP 1>)
-
-2. RELEASE STRATEGY / TIMELINE / DEADLINES:
-   STEP 1 → search_marketing_knowledge(query=<user question>)
-   STEP 2 → find_release_timing(genre=<known>, audience_size=<known or ask>)
-
-3. HOW-TO QUESTIONS (pitching, radio, press release, social plan, playlist, budget):
-   STEP 1 → search_marketing_knowledge(query=<user question>)
-
-4. SONG ANALYSIS:
+1. SONG ANALYSIS (If user asks ONLY for Genre, Mood, or "Analyze this song"):
    STEP 1 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
-   STEP 2 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 1 result>)
+   STEP 2 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 1 result>, audio_features="Use the AUDIO ANALYSIS FACTS provided above")
+   (🛑 STOP HERE. DO NOT call find_release_timing. DO NOT generate a release schedule.)
 
-5. LYRICS REQUEST:
-   STEP 1 → extract_lyrics(video_id="{video_id}")
+2. FULL MARKETING PLAN / STRATEGY (If user explicitly asks for a plan, dates, or strategy):
+   STEP 1 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
+   STEP 2 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 1 result>, audio_features="Use the AUDIO ANALYSIS FACTS provided above")
+   STEP 3 → find_release_timing(genre=<genre from step 2>, audience_size=<known or ask>)
+   STEP 4 → Suggest DropOperator Calendar Events (e.g., "Cover Art Deadline", "Prepare PR Release") for the user to execute the plan.
 
-   If search_marketing_knowledge returns weak, generic, or unrelated information:
-- acknowledge the limitation internally
-- use general marketing expertise instead
-- only incorporate the useful parts of the knowledge base
+3. HOW-TO / SPECIFIC ADVICE (e.g., radio, PR, social media):
+   STEP 1 → search_marketing_knowledge(query=<user question>)
 """
 
 # ---------------------------------------------------------------------------
@@ -144,18 +140,27 @@ async def run_agent(
     session_id: str,
     video_id: str,
     video_title: str = "",
-    video_channel: str = ""
+    video_channel: str = "",
+    audio_features_dict: dict = None
 ) -> dict:
     print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id}")
     print(f"   Message: '{message}'")
 
-    system_prompt = _build_system_prompt(video_id, video_title, video_channel)
+    # Convert audio features to a string for the prompt
+    audio_features_text = ""
+    if audio_features_dict and audio_features_dict.get('bpm'):
+        import json
+        audio_features_text = json.dumps(audio_features_dict)
+
+    system_prompt = _build_system_prompt(video_id, video_title, video_channel, audio_features_text)
 
     config = {
         "configurable": {
             "thread_id": session_id
         }
     }
+    
+    # ... (TOLIAU EINA TAVO SENAS KODAS: agent_input = { "messages": [...] } ir t.t. Nieko daugiau netrink!)
 
     agent_input = {
         "messages": [

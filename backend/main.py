@@ -46,7 +46,8 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str
     video_title: str = ""
-    video_channel: str = ""  # Optional — used to give agent better context
+    video_channel: str = ""
+    audio_features: dict | None = None  # Optional — used to give agent better context
 
 
 class AnalyzeLyricsRequest(BaseModel):
