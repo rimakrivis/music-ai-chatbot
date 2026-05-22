@@ -507,13 +507,8 @@ async def analyze_audio(
     artist: str = Form("Unknown Artist")
 ):
     """
-    Accepts an MP3 or WAV file, transcribes via Grok (xAI Whisper-compatible),
-    runs librosa for audio features, and embeds into Pinecone.
-
-    Grok is used instead of AssemblyAI for uploaded files because:
-      - Already in the stack (no extra API key)
-      - Handles multilingual audio well
-      - AssemblyAI is kept only as YouTube fallback
+    Accepts an MP3 or WAV file, transcribes via Grok (Whisper),
+    runs librosa for features, and embeds into Pinecone using namespace.
     """
     print(f"\n📥 [/analyze-audio] File: {file.filename} | Session: {session_id}")
 
@@ -525,25 +520,21 @@ async def analyze_audio(
             detail="Supported formats: MP3, WAV, M4A, OGG, FLAC."
         )
 
-    # 2. Read file bytes
+    # 2. Read file bytes safely
     try:
         file_bytes = await file.read()
         if len(file_bytes) == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty.")
         print(f"   File size: {len(file_bytes) / 1024 / 1024:.2f} MB")
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read audio file: {str(e)}")
 
     # 3. Generate stable internal ID from session + filename
     import hashlib
-    generated_video_id = hashlib.md5(
-        f"{session_id}_{file.filename}".encode()
-    ).hexdigest()[:11]
+    generated_video_id = hashlib.md5(f"{session_id}_{file.filename}".encode()).hexdigest()[:11]
     print(f"   Generated video_id: {generated_video_id}")
 
-    # 4. Save to temp file — needed for both Grok and librosa
+    # 4. Save to temp file for processing
     import tempfile as tf
     tmp_path = None
     try:
@@ -575,26 +566,20 @@ async def analyze_audio(
 
         with open(tmp_path, "rb") as audio_file:
             transcription = await xai_client.audio.transcriptions.create(
-                model="grok-whisper-1",        # xAI's Whisper-compatible model
+                model="grok-whisper-1",
                 file=(file.filename, audio_file, f"audio/{ext}"),
                 response_format="text",
             )
 
         transcript_text = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
-        word_count = len(transcript_text.split())
-        print(f"   ✅ Grok transcription: {word_count} words")
+        print(f"   ✅ Grok transcription complete")
 
     except Exception as e:
-        print(f"   ❌ Grok transcription failed: {str(e)}")
-        # Fallback to AssemblyAI if Grok transcription fails
-        print(f"   Falling back to AssemblyAI...")
+        print(f"   ❌ Grok failed: {str(e)}. Trying AssemblyAI fallback...")
         try:
             import assemblyai as aai
-            aai_key = os.getenv("ASSEMBLYAI_API_KEY")
-            if not aai_key:
-                raise ValueError("ASSEMBLYAI_API_KEY not set and Grok transcription failed.")
-
-            aai.settings.api_key = aai_key
+            import os
+            aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
             config = aai.TranscriptionConfig(language_detection=True)
             transcriber = aai.Transcriber(config=config)
             aai_transcript = transcriber.transcribe(tmp_path)
@@ -603,16 +588,16 @@ async def analyze_audio(
                 raise RuntimeError(f"AssemblyAI error: {aai_transcript.error}")
 
             transcript_text = aai_transcript.text.strip()
-            word_count = len(transcript_text.split())
-            print(f"   ✅ AssemblyAI fallback transcription: {word_count} words")
+            print(f"   ✅ AssemblyAI fallback complete")
         except Exception as fallback_err:
             raise HTTPException(
                 status_code=422,
                 detail=f"Transcription failed. Grok: {str(e)} | AssemblyAI fallback: {str(fallback_err)}"
             )
     finally:
-        # Always clean up temp file
-        if tmp_path:
+        # Always clean up temp file from disk
+        import os
+        if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
                 print(f"   Cleaned up temp file")
@@ -634,108 +619,19 @@ async def analyze_audio(
         print(f"   ❌ Embedding failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
 
+    # 7. Safe return mapped for both Pinecone (namespace) and your React State
     return {
         "video_id": generated_video_id,
         "transcript_text": transcript_text,
         "word_count": len(transcript_text.split()),
-        "title": title,
+        "title": title if title != "Unknown Audio" else file.filename,
         "artist": artist,
         "channel": artist,
         "chunks_created": embed_data.get("chunks_created", 0),
-        "audio_features": audio_features,   # BPM, energy, key — frontend can display these
+        "audio_features": audio_features,
+        "namespace": embed_data.get("namespace", f"video_{generated_video_id}"),
         "status": "success"
     }
-    """
-    Accepts an MP3 or WAV file, sends it to AssemblyAI for transcription,
-    and embeds the resulting text into Pinecone.
-    """
-    print(f"\n📥 [/analyze-audio] File: {file.filename} | Session: {session_id}")
-
-    # 1. Validate file format
-    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
-    if ext not in ["mp3", "wav"]:
-        raise HTTPException(status_code=400, detail="Only MP3 and WAV files are supported.")
-
-    # 2. Read file bytes
-    try:
-        file_bytes = await file.read()
-        if len(file_bytes) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read audio file: {str(e)}")
-
-    # 3. Generate a stable internal ID based on session and filename
-    import hashlib
-    generated_video_id = hashlib.md5(f"{session_id}_{file.filename}".encode()).hexdigest()[:11]
-
-# 4. Call AssemblyAI transcription logic via Official SDK
-    try:
-        import assemblyai as aai
-        import os
-
-        aai_key = os.getenv("ASSEMBLYAI_API_KEY")
-        if not aai_key:
-            raise ValueError("ASSEMBLYAI_API_KEY is not set in environment variables.")
-
-        # Configure the official client
-        aai.settings.api_key = aai_key
-        transcriber = aai.Transcriber()
-
-        # Custom configuration aligned with the latest AssemblyAI SDK standards
-        config = aai.TranscriptionConfig(
-            language_detection=True,
-            speech_models=["universal-3-pro", "universal-2"]
-        )
-
-        print("   Saving audio to temp file for AssemblyAI...")
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-
-        print(f"   Transcribing via AssemblyAI SDK: {tmp_path}")
-        transcript = transcriber.transcribe(tmp_path, config=config)
-
-        # Clean up temp file
-        try:
-            os.remove(tmp_path)
-        except Exception:
-            pass
-
-        if transcript.status == aai.TranscriptStatus.error:
-            raise RuntimeError(f"AssemblyAI error: {transcript.error}")
-
-        transcript_text = transcript.text
-        word_count = len(transcript_text.split())
-        print(f"   Audio transcribed successfully: {word_count} words")
-
-    except Exception as e:
-        print(f"   ❌ AssemblyAI transcription failed: {str(e)}")
-        raise HTTPException(status_code=422, detail=f"Transcription failed: {str(e)}")
-
-    # 5. Chunk and embed the resulting transcript into Pinecone
-    try:
-        embed_data = chunk_and_embed(
-            video_id=generated_video_id,
-            transcript_text=transcript_text,
-            session_id=session_id
-        )
-        print(f"   Embedded audio transcript: {embed_data.get('chunks_created', 0)} chunks")
-    except Exception as e:
-        print(f"   ❌ Embedding failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
-
-    return {
-        "video_id": generated_video_id,
-        "transcript_text": transcript_text,
-        "word_count": word_count,
-        "title": title,
-        "artist": artist,
-        "channel": artist,
-        "chunks_created": embed_data.get("chunks_created", 0),
-        "status": "success"
-    }
-
 # ── Calendar Endpoints ─────────────────────────────────────────────────────────
 
 @app.post("/calendar/events")
