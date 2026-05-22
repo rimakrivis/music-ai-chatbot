@@ -2,34 +2,65 @@
 main.py — FastAPI application entry point for Music AI Chatbot.
 
 Endpoints:
-  GET  /health                 — health check (used by Railway)
-  POST /analyze                — fetch YouTube transcript + embed into ChromaDB
-  POST /analyze-lyrics         — embed manually pasted lyrics (for non-English songs)
-  POST /chat                   — send a message to the LangChain agent
-  GET  /transcript/{video_id}  — read back transcript chunks from ChromaDB
+  GET  /health                       — health check
+  POST /analyze                      — fetch YouTube transcript + embed into Pinecone
+  POST /analyze-lyrics               — embed manually pasted lyrics
+  POST /analyze-audio                — upload MP3/WAV → Grok Whisper → Pinecone
+  POST /chat                         — send a message to the LangChain agent
+  POST /event-chat                   — creative assistant for a specific calendar task
+  GET  /transcript/{video_id}        — read back transcript from Pinecone
 
-Startup behaviour:
-  - Creates the LangChain agent once (reused across all requests)
-  - Validates all required environment variables
-  - In production (Railway): seeds marketing knowledge into ChromaDB on boot
-    because EphemeralClient resets on every restart
+  POST   /calendar/events
+  GET    /calendar/events/{session_id}
+  PATCH  /calendar/events/{event_id}
+  DELETE /calendar/events/{event_id}
+  DELETE /session/{session_id}       — clears all events + todos for a session
+
+  POST   /todos
+  GET    /todos/{session_id}
+  PATCH  /todos/{todo_id}
+  DELETE /todos/{todo_id}
+
+Architecture notes:
+  - Vector DB: Pinecone Serverless (namespaced per video)
+  - No ChromaDB anywhere — legacy comments removed
+  - Agent created once at startup, reused across all requests
+  - Audio features extracted by librosa during /analyze-audio
+  - Task extraction uses GPT-4o-mini with today's date injected
 """
 
 from contextlib import asynccontextmanager
 import os
+import hashlib
+import json
 import tempfile
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import date
-import json
-from openai import AsyncOpenAI
-from database import create_tables, save_calendar_events, get_calendar_events, update_calendar_event, delete_calendar_event, save_todos, get_todos, update_todo, delete_todo, delete_session_data
 
-from seed_knowledge import seed_knowledge_file
-from config import validate_config, IS_PRODUCTION, ENVIRONMENT
-from pipeline import fetch_transcript, chunk_and_embed, get_transcript_from_chroma
+from openai import AsyncOpenAI
+
+from database import (
+    create_tables,
+    save_calendar_events,
+    get_calendar_events,
+    update_calendar_event,
+    delete_calendar_event,
+    save_todos,
+    get_todos,
+    update_todo,
+    delete_todo,
+    delete_session_data,
+)
+from config import validate_config, IS_PRODUCTION, ENVIRONMENT, OPENAI_API_KEY, XAI_API_KEY
+from pipeline import (
+    fetch_transcript,
+    chunk_and_embed,
+    get_transcript_from_chroma,   # alias for get_transcript_from_pinecone
+    extract_audio_features,
+)
 from agent import create_music_agent, run_agent
 
 
@@ -47,7 +78,7 @@ class ChatRequest(BaseModel):
     session_id: str
     video_title: str = ""
     video_channel: str = ""
-    audio_features: dict | None = None  # Optional — used to give agent better context
+    audio_features: dict | None = None   # optional — passed to agent for richer context
 
 
 class AnalyzeLyricsRequest(BaseModel):
@@ -63,7 +94,7 @@ class AnalyzeLyricsResponse(BaseModel):
     artist: str
     word_count: int
     chunks_created: int
-    collection_name: str
+    namespace: str
     status: str
 
 
@@ -71,7 +102,7 @@ class TranscriptResponse(BaseModel):
     video_id: str
     transcript_text: str
     word_count: int
-    collection_name: str
+    namespace: str
 
 
 class ChatResponse(BaseModel):
@@ -83,59 +114,62 @@ class ChatResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# App lifecycle — startup + shutdown
+# App lifecycle — startup only (no blocking seed calls)
 # ---------------------------------------------------------------------------
 
 agent_state = {}
 
 
-# backend/main.py
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Runs once when the server starts, before accepting any requests.
+    Runs once at server start before accepting any requests.
 
     Order:
       1. Validate all required environment variables.
-      2. Create database tables.
-      3. Create the LangChain agent once.
+      2. Create Supabase tables (idempotent).
+      3. Create the LangChain agent once — reused for all /chat requests.
+
+    Production note:
+      Marketing knowledge is seeded separately via a one-off script.
+      We do NOT seed on boot — it causes Render startup timeouts.
     """
     print("\n🚀 [startup] Starting Music AI backend...")
     print(f"🚀 [startup] Environment: {ENVIRONMENT}")
 
-    # Step 1 — validate env vars
+    # 1 — validate env vars (raises ValueError and halts boot on missing keys)
     try:
         validate_config()
     except ValueError as e:
         print(f"🚀 [startup] FATAL: {e}")
         raise
 
-    print("🚀 [startup] Production mode — skipping active knowledge seed (relying on persistent Pinecone)")
+    print("🚀 [startup] Production mode — relying on persistent Pinecone for marketing knowledge")
 
-    # Step 2 — create database tables
+    # 2 — ensure Supabase tables exist
     await create_tables()
 
-    # Step 3 — create agent
+    # 3 — create agent once
     agent_state["agent"] = create_music_agent()
+
     print("🚀 [startup] Backend ready ✓\n")
 
     yield
 
     print("\n[shutdown] Music AI backend shutting down")
+
+
 # ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="Music AI Chatbot API",
-    description="AI-powered music marketing assistant. Analyze YouTube videos and chat about songs.",
+    description="AI-powered music marketing assistant.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# CORS — open for development and school demo.
-# In the SaaS phase: replace allow_origins=["*"] with your exact Vercel domain.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -146,12 +180,11 @@ app.add_middleware(
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Health
 # ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
-    """Health check — Railway pings this to confirm the service is alive."""
     return {
         "status": "ok",
         "message": "Music AI backend running",
@@ -160,15 +193,15 @@ async def health():
     }
 
 
+# ---------------------------------------------------------------------------
+# /analyze — YouTube URL → Pinecone
+# ---------------------------------------------------------------------------
+
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest):
     """
-    Accepts a YouTube URL, fetches the transcript, embeds it into ChromaDB.
+    Fetches YouTube transcript (4-method cascade) and embeds into Pinecone.
     Returns video metadata + embedding stats.
-
-    Transcript strategy:
-      1. youtube-transcript-api (fast, free, works for most major releases)
-      2. AssemblyAI fallback (for videos with captions disabled)
 
     For non-English songs with poor auto-captions, use POST /analyze-lyrics instead.
     """
@@ -182,7 +215,7 @@ async def analyze(request: AnalyzeRequest):
     except RuntimeError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
-        print(f"   ❌ /analyze error: {str(e)}")
+        print(f"   ❌ /analyze error: {e}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
     try:
@@ -192,25 +225,25 @@ async def analyze(request: AnalyzeRequest):
         )
         print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
     except Exception as e:
-        print(f"   ❌ /analyze embed error: {str(e)}")
+        print(f"   ❌ /analyze embed error: {e}")
         raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
 
     return {**transcript_data, **embed_data}
 
 
+# ---------------------------------------------------------------------------
+# /analyze-lyrics — paste lyrics → Pinecone
+# ---------------------------------------------------------------------------
+
 @app.post("/analyze-lyrics", response_model=AnalyzeLyricsResponse)
 async def analyze_lyrics(request: AnalyzeLyricsRequest):
     """
-    Accepts manually pasted lyrics and embeds them into ChromaDB.
+    Accepts manually pasted lyrics and embeds them into Pinecone.
 
-    Use this when:
-      - The YouTube video has no captions (e.g. new indie release)
-      - The auto-transcript quality is poor (common for Lithuanian, Latvian,
-        Estonian, and other smaller-language songs)
-      - You already have the correct lyrics from Genius or another source
-
-    The video_id must match the one returned by POST /analyze — the agent
-    uses the same video_id to scope its ChromaDB searches.
+    Use when:
+      - The YouTube video has no captions
+      - Auto-transcript quality is poor (common for Lithuanian, Latvian, Estonian)
+      - You already have correct lyrics from Genius or another source
     """
     print(f"\n📥 [/analyze-lyrics] video_id: {request.video_id} | artist: {request.artist}")
 
@@ -227,7 +260,7 @@ async def analyze_lyrics(request: AnalyzeLyricsRequest):
         )
         print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
     except Exception as e:
-        print(f"   ❌ /analyze-lyrics error: {str(e)}")
+        print(f"   ❌ /analyze-lyrics error: {e}")
         raise HTTPException(status_code=500, detail=f"Lyrics embedding failed: {str(e)}")
 
     return AnalyzeLyricsResponse(
@@ -236,75 +269,260 @@ async def analyze_lyrics(request: AnalyzeLyricsRequest):
         artist=request.artist,
         word_count=len(request.lyrics_text.split()),
         chunks_created=embed_data["chunks_created"],
-        collection_name=embed_data["collection_name"],
+        namespace=embed_data["namespace"],
         status="success",
     )
 
-async def extract_tasks_from_response(response_text: str) -> dict:
+
+# ---------------------------------------------------------------------------
+# /analyze-audio — upload file → Grok Whisper → Pinecone
+# ---------------------------------------------------------------------------
+
+@app.post("/analyze-audio")
+async def analyze_audio(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+    title: str = Form("Unknown Audio"),
+    artist: str = Form("Unknown Artist"),
+):
     """
-    Calls GPT-4o-mini to extract actionable tasks and dates from agent response.
-    Today's date is injected so all relative dates (next Friday, in 2 weeks)
-    are resolved to real YYYY-MM-DD values — no hallucination possible.
+    Accepts an audio file (MP3, WAV, M4A, OGG, FLAC).
+    Pipeline:
+      1. Validate format
+      2. Generate stable video_id from session + filename
+      3. Save to temp file
+      4. Extract audio features with librosa (BPM, energy, key, mode)
+      5. Transcribe with AssemblyAI
+      6. Chunk + embed into Pinecone
+      7. Clean up temp file AFTER transcription is done
     """
-    today = date.today().isoformat()
-    print(f"📅 Extracting tasks from agent response (today = {today})")
+    print(f"\n📥 [/analyze-audio] File: {file.filename} | Session: {session_id}")
 
-    client = AsyncOpenAI()
+    # 1 — validate format
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ["mp3", "wav", "m4a", "ogg", "flac"]:
+        raise HTTPException(status_code=400, detail="Supported formats: MP3, WAV, M4A, OGG, FLAC.")
 
-    prompt = f"""Today: {today}
+    # 2 — read bytes
+    try:
+        file_bytes = await file.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        print(f"   File size: {len(file_bytes) / 1024 / 1024:.2f} MB")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read audio file: {str(e)}")
 
-Extract ALL actionable items from this music marketing response.
+    # 3 — stable video_id
+    generated_video_id = hashlib.md5(
+        f"{session_id}_{file.filename}".encode()
+    ).hexdigest()[:11]
+    print(f"   Generated video_id: {generated_video_id}")
 
-Rules:
-- Convert ALL relative dates to YYYY-MM-DD using today={today}
-- Dates mentioned explicitly OR implied (e.g. "2 weeks before June 11" = {today}) → calendar_events
-- Actions without dates → todo_items
-- Extract EVERY item — do not summarize or skip any
-- type: release|deadline|promo|spotify|youtube|social_media|general
-- Return ONLY valid JSON, no markdown
+    # 4 — save to temp file (must stay on disk until AssemblyAI upload completes)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
+        print(f"   Saved to temp: {tmp_path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save temp file: {str(e)}")
 
-{{"calendar_events":[{{"title":"...","date":"YYYY-MM-DD","type":"..."}}],"todo_items":[{{"title":"...","due_date":"YYYY-MM-DD or null"}}]}}
-
-Response to analyze:
-{response_text}"""
+    transcript_text = ""
+    audio_features = {}
 
     try:
-        response = await client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
+        # 5 — librosa audio features (non-fatal)
+        try:
+            audio_features = extract_audio_features(tmp_path)
+            print(f"   🎵 Audio features: {audio_features}")
+        except Exception as e:
+            print(f"   ⚠️ librosa failed (non-fatal): {e}")
+            audio_features = {}
+
+        # 6 — AssemblyAI transcription via direct REST API (bypasses SDK version issues)
+        import httpx as _httpx
+        import time as _time
+
+        _aai_key = os.getenv("ASSEMBLYAI_API_KEY")
+        _headers = {"authorization": _aai_key}
+
+        print("   Uploading to AssemblyAI...")
+        with open(tmp_path, "rb") as _f:
+            _upload_resp = _httpx.post(
+                "https://api.assemblyai.com/v2/upload",
+                headers=_headers,
+                content=_f.read(),
+                timeout=120,
+            )
+        _upload_resp.raise_for_status()
+        _upload_url = _upload_resp.json()["upload_url"]
+        print(f"   ✅ Uploaded to AssemblyAI CDN")
+
+        print("   Submitting transcription job...")
+        _transcript_resp = _httpx.post(
+            "https://api.assemblyai.com/v2/transcript",
+            headers={**_headers, "content-type": "application/json"},
+            json={
+                "audio_url": _upload_url,
+                "language_detection": True,
+                "speech_models": ["universal-2"],
+            },
+            timeout=30,
         )
-        raw = response.choices[0].message.content.strip()
-        print(f"   Raw extraction: {raw[:200]}")
+        if not _transcript_resp.is_success:
+            raise HTTPException(
+                status_code=422,
+                detail=f"AssemblyAI job submission failed: {_transcript_resp.text}",
+            )
+        _transcript_id = _transcript_resp.json()["id"]
+        print(f"   Job ID: {_transcript_id}")
 
-        # Strip markdown fences if model adds them anyway
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
+        while True:
+            _poll = _httpx.get(
+                f"https://api.assemblyai.com/v2/transcript/{_transcript_id}",
+                headers=_headers,
+                timeout=30,
+            )
+            _poll.raise_for_status()
+            _status = _poll.json()["status"]
+            if _status == "completed":
+                transcript_text = _poll.json()["text"].strip()
+                print(f"   ✅ AssemblyAI complete ({len(transcript_text)} chars)")
+                break
+            elif _status == "error":
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Transcription failed: {_poll.json().get('error')}",
+                )
+            else:
+                print(f"   ⏳ {_status} — polling...")
+                _time.sleep(3)
 
-        parsed = json.loads(raw)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Transcription failed: {str(e)}")
+
+    finally:
+        # Always clean up — runs AFTER transcribe() returns (it's synchronous/blocking)
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+                print("   Cleaned up temp file")
+            except Exception:
+                pass
+
+    if not transcript_text:
+        raise HTTPException(status_code=422, detail="Transcription returned empty text.")
+
+    # 7 — chunk + embed into Pinecone
+    try:
+        embed_data = chunk_and_embed(
+            video_id=generated_video_id,
+            transcript_text=transcript_text,
+        )
+        print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
+    except Exception as e:
+        print(f"   ❌ Embedding failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
+
+    return {
+        "video_id": generated_video_id,
+        "transcript_text": transcript_text,
+        "word_count": len(transcript_text.split()),
+        "title": title if title != "Unknown Audio" else file.filename,
+        "artist": artist,
+        "channel": artist,
+        "chunks_created": embed_data.get("chunks_created", 0),
+        "audio_features": audio_features,
+        "namespace": embed_data.get("namespace", f"video_{generated_video_id}"),
+        "status": "success",
+    }
+# ---------------------------------------------------------------------------
+# Task extraction helper — parses calendar events + todos from agent response
+# ---------------------------------------------------------------------------
+
+async def extract_tasks_from_response(response_text: str) -> dict:
+    """
+    Calls GPT-4o-mini to extract structured calendar events and todo items
+    from the agent's markdown response text.
+
+    Returns:
+        {
+            "calendar_events": [{"title": str, "date": str, "type": str}, ...],
+            "todo_items":      [{"title": str, "due_date": str | None}, ...]
+        }
+    """
+    print("   🗂️ [extract_tasks] Extracting tasks from response...")
+
+    today = date.today().isoformat()  # e.g. "2026-05-23"
+
+    system_prompt = f"""You are a task extraction assistant. Today's date is {today}.
+
+Extract structured tasks from the music marketing plan below.
+
+Return ONLY valid JSON — no markdown, no backticks, no explanation:
+{{
+  "calendar_events": [
+    {{"title": "string", "date": "YYYY-MM-DD", "type": "release|deadline|promo|spotify|youtube|social_media|general"}}
+  ],
+  "todo_items": [
+    {{"title": "string", "due_date": "YYYY-MM-DD or null"}}
+  ]
+}}
+
+Rules:
+- Only extract events that have a clear date or relative time hint (e.g. "2 weeks before release")
+- Resolve relative dates using today = {today}
+- If no date is mentioned, set due_date to null for todos and skip for calendar events
+- type must be one of: release, deadline, promo, spotify, youtube, social_media, general
+- If no tasks found, return {{"calendar_events": [], "todo_items": []}}"""
+
+    try:
+        client = AsyncOpenAI()
+        completion = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": response_text},
+            ],
+            temperature=0,
+            max_tokens=1000,
+        )
+        raw = completion.choices[0].message.content.strip()
+        print(f"   🗂️ [extract_tasks] Raw response: {raw[:120]}...")
+
+        # Strip markdown fences if model ignores instructions
+        clean = raw.replace("```json", "").replace("```", "").strip()
+        parsed = json.loads(clean)
+
         calendar_events = parsed.get("calendar_events", [])
         todo_items = parsed.get("todo_items", [])
-        print(f"   ✅ Extracted {len(calendar_events)} calendar events, {len(todo_items)} todos")
+
+        print(f"   ✅ [extract_tasks] Found {len(calendar_events)} events, {len(todo_items)} todos")
         return {"calendar_events": calendar_events, "todo_items": todo_items}
 
+    except json.JSONDecodeError as e:
+        print(f"   ⚠️ [extract_tasks] JSON parse failed: {e} — returning empty tasks")
+        return {"calendar_events": [], "todo_items": []}
     except Exception as e:
-        print(f"   ⚠️ Task extraction failed (non-fatal): {e}")
+        print(f"   ⚠️ [extract_tasks] Extraction failed: {e} — returning empty tasks")
         return {"calendar_events": [], "todo_items": []}
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
+    
     """
-    Sends a user message to the LangChain agent and returns the response.
-    Memory is scoped to session_id — each session has its own conversation history.
+    Sends a user message to the LangChain ReAct agent and returns the response.
+    Memory is scoped to session_id.
 
-    Request body:
-        video_id:      YouTube video ID from /analyze response
-        message:       User's question or request
-        session_id:    Unique session identifier (generate on frontend, e.g. uuid)
-        video_title:   Optional — helps agent give better context in responses
-        video_channel: Optional — YouTube channel name (used as artist name)
+    Agent behaviour is controlled by the system prompt in agent.py:
+      - Genre/mood only → search_transcript + analyze_marketing_potential (STOP)
+      - Full plan → full chain including find_release_timing
+      - How-to → search_marketing_knowledge
     """
     print(f"\n📥 [/chat] Session: {request.session_id} | Video: {request.video_id}")
     print(f"   Message: '{request.message}'")
@@ -312,7 +530,7 @@ async def chat(request: ChatRequest):
     if "agent" not in agent_state:
         raise HTTPException(
             status_code=503,
-            detail="Agent not initialized. Please restart the backend.",
+            detail="Agent not initialised. Please restart the backend.",
         )
 
     if not request.message.strip():
@@ -326,6 +544,7 @@ async def chat(request: ChatRequest):
             video_id=request.video_id,
             video_title=request.video_title,
             video_channel=request.video_channel,
+            audio_features=request.audio_features,  # dict or None
         )
 
         tasks = await extract_tasks_from_response(result["response"])
@@ -339,16 +558,23 @@ async def chat(request: ChatRequest):
         )
 
     except Exception as e:
-        print(f"   ❌ /chat error: {str(e)}")
+        print(f"   ❌ /chat error: {e}")
         raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# /event-chat — per-event creative assistant (EventDrawer)
+# ---------------------------------------------------------------------------
 
 @app.post("/event-chat")
 async def event_chat(request: dict):
     """
-    Dedicated creative assistant for a specific calendar task.
-    1. Searches marketing_knowledge ChromaDB for relevant guidelines
-    2. Fetches song transcript for real content
-    3. Uses both as context — only falls back to training data if DB empty
+    Creative assistant scoped to a specific calendar task.
+
+    Pipeline:
+      1. Search Pinecone marketing_knowledge for relevant guidelines
+      2. Fetch song transcript from Pinecone for real lyrical content
+      3. Build a tight system prompt and call GPT-4o
     """
     message = request.get("message", "")
     event_title = request.get("event_title", "")
@@ -364,39 +590,37 @@ async def event_chat(request: dict):
     if not message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    # 1. Search marketing knowledge base for relevant guidelines
+    # 1 — search marketing knowledge in Pinecone
     knowledge_context = ""
     try:
         from langchain_openai import OpenAIEmbeddings
         from langchain_pinecone import PineconeVectorStore
-        from config import OPENAI_API_KEY
-        import os
 
-        embeddings = OpenAIEmbeddings(
+        _embeddings = OpenAIEmbeddings(
             model="text-embedding-3-small",
-            openai_api_key=OPENAI_API_KEY
+            openai_api_key=OPENAI_API_KEY,
         )
         vector_store = PineconeVectorStore(
             index_name=os.getenv("PINECONE_INDEX_NAME", "music-ai-chat"),
-            embedding=embeddings,
+            embedding=_embeddings,
             namespace="marketing_knowledge",
         )
-        # Search using both the task type and the user message for better recall
-        search_query = f"{event_type} {event_title} {message}"
-        results = vector_store.similarity_search(search_query, k=3)
+        results = vector_store.similarity_search(
+            f"{event_type} {event_title} {message}", k=3
+        )
         if results:
             chunks = []
             for doc in results:
                 header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or ""
                 chunks.append(f"[{header}]\n{doc.page_content}")
             knowledge_context = "\n\n---\n\n".join(chunks)
-            print(f"   📚 Retrieved {len(results)} knowledge chunks from DB")
+            print(f"   📚 Retrieved {len(results)} knowledge chunks")
         else:
             print("   📚 No knowledge chunks found — using training data")
     except Exception as e:
         print(f"   ⚠️ Knowledge search failed: {e}")
 
-    # 2. Fetch transcript for real song content
+    # 2 — fetch transcript from Pinecone
     transcript_context = ""
     if video_id:
         try:
@@ -407,20 +631,23 @@ async def event_chat(request: dict):
         except Exception as e:
             print(f"   ⚠️ Could not fetch transcript: {e}")
 
-    # 3. Build system prompt — DB knowledge first, training data as fallback
-    # Determine tone based on task type
+    # 3 — tone guide per event type
     tone_guide = {
-        "spotify": "formal, professional, industry-standard",
-        "deadline": "clear, direct, professional",
-        "release": "professional with excitement",
-        "youtube": "engaging, platform-native",
+        "spotify":      "formal, professional, industry-standard",
+        "deadline":     "clear, direct, professional",
+        "release":      "professional with excitement",
+        "youtube":      "engaging, platform-native",
         "social_media": "casual, platform-matched — Instagram: visual storytelling; TikTok: punchy hook first; Twitter/X: concise wit",
-        "promo": "energetic, promotional",
-        "general": "professional but approachable",
+        "promo":        "energetic, promotional",
+        "general":      "professional but approachable",
     }
     tone = tone_guide.get(event_type, "professional but approachable")
 
-    artist = video_channel if video_channel and video_channel != "Unknown Artist" else (video_title.split(" - ")[0] if " - " in video_title else video_channel)
+    artist = (
+        video_channel
+        if video_channel and video_channel != "Unknown Artist"
+        else (video_title.split(" - ")[0] if " - " in video_title else video_channel)
+    )
 
     system_prompt = f"""You are a music industry professional. Write submission-ready content only.
 
@@ -457,19 +684,23 @@ Rules:
         print(f"   ❌ /event-chat error: {e}")
         raise HTTPException(status_code=500, detail=f"Event chat failed: {str(e)}")
 
+
+# ---------------------------------------------------------------------------
+# /transcript/{video_id} — read back from Pinecone
+# ---------------------------------------------------------------------------
+
 @app.get("/transcript/{video_id}", response_model=TranscriptResponse)
 async def get_transcript(video_id: str):
     """
-    Reads all chunks from ChromaDB and returns the reconstructed transcript.
-    Used by the frontend TranscriptPanel to display the raw lyrics/transcript.
-    Returns 404 if the video has not been analyzed yet.
+    Reads all chunks from Pinecone and returns the reconstructed transcript.
+    Returns 404 if the video has not been analysed yet.
     """
     print(f"\n📥 [/transcript] video_id: {video_id}")
 
     try:
         result = get_transcript_from_chroma(video_id)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ChromaDB read failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Pinecone read failed: {str(e)}")
 
     if not result:
         raise HTTPException(
@@ -481,154 +712,23 @@ async def get_transcript(video_id: str):
         video_id=video_id,
         transcript_text=result["transcript_text"],
         word_count=result["word_count"],
-        collection_name=f"video_{video_id}",
+        namespace=f"video_{video_id}",
     )
 
-@app.post("/analyze-audio")
-async def analyze_audio(
-    file: UploadFile = File(...),
-    session_id: str = Form(...),
-    title: str = Form("Unknown Audio"),
-    artist: str = Form("Unknown Artist")
-):
-    """
-    Accepts an MP3 or WAV file, transcribes via Grok (Whisper),
-    runs librosa for features, and embeds into Pinecone using namespace.
-    """
-    print(f"\n📥 [/analyze-audio] File: {file.filename} | Session: {session_id}")
 
-    # 1. Validate file format
-    ext = file.filename.split(".")[-1].lower() if "." in file.filename else ""
-    if ext not in ["mp3", "wav", "m4a", "ogg", "flac"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Supported formats: MP3, WAV, M4A, OGG, FLAC."
-        )
-
-    # 2. Read file bytes safely
-    try:
-        file_bytes = await file.read()
-        if len(file_bytes) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-        print(f"   File size: {len(file_bytes) / 1024 / 1024:.2f} MB")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read audio file: {str(e)}")
-
-    # 3. Generate stable internal ID from session + filename
-    import hashlib
-    generated_video_id = hashlib.md5(f"{session_id}_{file.filename}".encode()).hexdigest()[:11]
-    print(f"   Generated video_id: {generated_video_id}")
-
-    # 4. Save to temp file for processing
-    import tempfile as tf
-    tmp_path = None
-    try:
-        with tf.NamedTemporaryFile(suffix=f".{ext}", delete=False) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-        print(f"   Saved to temp: {tmp_path}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save temp file: {str(e)}")
-
-    transcript_text = ""
-    audio_features = {}
-
-    try:
-        # 5a. Extract audio features with librosa (runs on temp file)
-        print(f"   Running librosa on uploaded file...")
-        from pipeline import extract_audio_features
-        audio_features = extract_audio_features(tmp_path)
-
-        # 5b. Transcribe with Grok via OpenAI-compatible audio endpoint
-        print(f"   Transcribing with Grok...")
-        from config import XAI_API_KEY
-        from openai import AsyncOpenAI
-
-        xai_client = AsyncOpenAI(
-            api_key=XAI_API_KEY,
-            base_url="https://api.x.ai/v1",
-        )
-
-        with open(tmp_path, "rb") as audio_file:
-            transcription = await xai_client.audio.transcriptions.create(
-                model="grok-whisper-1",
-                file=(file.filename, audio_file, f"audio/{ext}"),
-                response_format="text",
-            )
-
-        transcript_text = transcription.strip() if isinstance(transcription, str) else transcription.text.strip()
-        print(f"   ✅ Grok transcription complete")
-
-    except Exception as e:
-        print(f"   ❌ Grok failed: {str(e)}. Trying AssemblyAI fallback...")
-        try:
-            import assemblyai as aai
-            import os
-            aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
-            config = aai.TranscriptionConfig(language_detection=True)
-            transcriber = aai.Transcriber(config=config)
-            aai_transcript = transcriber.transcribe(tmp_path)
-
-            if aai_transcript.status == aai.TranscriptStatus.error:
-                raise RuntimeError(f"AssemblyAI error: {aai_transcript.error}")
-
-            transcript_text = aai_transcript.text.strip()
-            print(f"   ✅ AssemblyAI fallback complete")
-        except Exception as fallback_err:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Transcription failed. Grok: {str(e)} | AssemblyAI fallback: {str(fallback_err)}"
-            )
-    finally:
-        # Always clean up temp file from disk
-        import os
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-                print(f"   Cleaned up temp file")
-            except Exception:
-                pass
-
-    if not transcript_text:
-        raise HTTPException(status_code=422, detail="Transcription returned empty text.")
-
-    # 6. Chunk and embed into Pinecone
-    try:
-        embed_data = chunk_and_embed(
-            video_id=generated_video_id,
-            transcript_text=transcript_text,
-            session_id=session_id
-        )
-        print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
-    except Exception as e:
-        print(f"   ❌ Embedding failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
-
-    # 7. Safe return mapped for both Pinecone (namespace) and your React State
-    return {
-        "video_id": generated_video_id,
-        "transcript_text": transcript_text,
-        "word_count": len(transcript_text.split()),
-        "title": title if title != "Unknown Audio" else file.filename,
-        "artist": artist,
-        "channel": artist,
-        "chunks_created": embed_data.get("chunks_created", 0),
-        "audio_features": audio_features,
-        "namespace": embed_data.get("namespace", f"video_{generated_video_id}"),
-        "status": "success"
-    }
-# ── Calendar Endpoints ─────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Calendar endpoints
+# ---------------------------------------------------------------------------
 
 @app.post("/calendar/events")
 async def create_calendar_events(request: dict):
     try:
-        session_id = request["session_id"]
-        video_id = request["video_id"]
-        events = request["events"]
-        saved = await save_calendar_events(session_id, video_id, events)
+        saved = await save_calendar_events(
+            request["session_id"], request["video_id"], request["events"]
+        )
         return {"saved": saved, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error in POST /calendar/events: {e}")
+        print(f"❌ POST /calendar/events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -638,7 +738,7 @@ async def read_calendar_events(session_id: str):
         events = await get_calendar_events(session_id)
         return {"events": events}
     except Exception as e:
-        print(f"❌ Error in GET /calendar/events: {e}")
+        print(f"❌ GET /calendar/events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -648,17 +748,9 @@ async def edit_calendar_event(event_id: int, request: dict):
         updated = await update_calendar_event(event_id, request)
         return {"updated": updated, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error in PATCH /calendar/events: {e}")
+        print(f"❌ PATCH /calendar/events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.delete("/session/{session_id}")
-async def delete_session(session_id: str):
-    try:
-        deleted = await delete_session_data(session_id)
-        return {"deleted": deleted, "status": "ok"}
-    except Exception as e:
-        print(f"❌ Error in DELETE /session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/calendar/events/{event_id}")
 async def remove_calendar_event(event_id: int):
@@ -666,30 +758,37 @@ async def remove_calendar_event(event_id: int):
         deleted = await delete_calendar_event(event_id)
         return {"deleted": deleted, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error in DELETE /calendar/events: {e}")
+        print(f"❌ DELETE /calendar/events: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-@app.delete("/todos/session/{session_id}")
-async def delete_session_todos(session_id: str):
+
+
+# ---------------------------------------------------------------------------
+# Session delete — clears all events + todos for a session
+# ---------------------------------------------------------------------------
+
+@app.delete("/session/{session_id}")
+async def delete_session(session_id: str):
     try:
-        await supabase_client.table("todos").delete().eq("session_id", session_id).execute()
-        return {"status": "ok"}
+        deleted = await delete_session_data(session_id)
+        return {"deleted": deleted, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error deleting session todos: {e}")
+        print(f"❌ DELETE /session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Todo Endpoints ─────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Todo endpoints
+# ---------------------------------------------------------------------------
 
 @app.post("/todos")
 async def create_todos(request: dict):
     try:
-        session_id = request["session_id"]
-        video_id = request["video_id"]
-        items = request["items"]
-        saved = await save_todos(session_id, video_id, items)
+        saved = await save_todos(
+            request["session_id"], request["video_id"], request["items"]
+        )
         return {"saved": saved, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error in POST /todos: {e}")
+        print(f"❌ POST /todos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -699,7 +798,7 @@ async def read_todos(session_id: str):
         items = await get_todos(session_id)
         return {"items": items}
     except Exception as e:
-        print(f"❌ Error in GET /todos: {e}")
+        print(f"❌ GET /todos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -709,7 +808,7 @@ async def edit_todo(todo_id: int, request: dict):
         updated = await update_todo(todo_id, request)
         return {"updated": updated, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error in PATCH /todos: {e}")
+        print(f"❌ PATCH /todos: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -719,5 +818,5 @@ async def remove_todo(todo_id: int):
         deleted = await delete_todo(todo_id)
         return {"deleted": deleted, "status": "ok"}
     except Exception as e:
-        print(f"❌ Error in DELETE /todos: {e}")
+        print(f"❌ DELETE /todos: {e}")
         raise HTTPException(status_code=500, detail=str(e))

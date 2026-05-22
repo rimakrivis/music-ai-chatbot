@@ -1,5 +1,6 @@
 # backend/tools/analyze_marketing.py
 import os
+import json
 from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
@@ -11,7 +12,6 @@ PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai-chat")
 if not OPENAI_API_KEY:
     raise EnvironmentError(
         "[analyze_marketing] OPENAI_API_KEY is not set. "
-        "Pinecone embeddings use text-embedding-3-small which requires OpenAI. "
         "Add OPENAI_API_KEY to your Render environment variables."
     )
 
@@ -37,87 +37,35 @@ llm = ChatOpenAI(
 print(f"[analyze_marketing] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT} ✓")
 
 
-@tool
-def analyze_marketing_potential(
-    video_id: str,
-    transcript_text: str,
-    audio_features: str = "",
-    spotify_genres: str = "",
-) -> str:
-    """
-    Analyze the marketing potential of a song based on its transcript content and audio features.
-    """
-    print(f"\n📊 [analyze_marketing_potential] Analyzing video: {video_id}")
-
-    if not transcript_text or len(transcript_text.strip()) < 30:
-        return (
-            "⚠️ transcript_text is empty or too short to analyze. "
-            "Please call search_transcript first with a query like "
-            "'mood energy genre chorus feeling' and pass the result here."
-        )
-
-    # Parse audio_features if passed as JSON string from agent
-    parsed_audio = {}
-    if audio_features:
-        try:
-            import json
-            parsed_audio = json.loads(audio_features)
-        except Exception:
-            pass
-
-    audio_features_block = _format_audio_features(parsed_audio)
-
-    # Spotify genres block
-    spotify_block = ""
-    if spotify_genres:
-        spotify_block = f"SPOTIFY ARTIST GENRES:\n{spotify_genres}"
-
-    # OPTIMIZED: Removed redundant vector DB searches. 
-    # Transcript is still passed directly below.
-    system_prompt = """You are DropOperator AI — an expert music analyst.
-Base genre and mood conclusions on ALL available signals: transcript, audio features, and Spotify genres.
-Always respond in the same language the user writes in."""
-
-    user_message = f"""Analyze this song and return a brief with EXACTLY these sections:
-
-GENRE & SUBGENRE:
-MOOD & ENERGY:
-TARGET AUDIENCE:
-TIKTOK / REELS POTENTIAL:
-STRONGEST HOOK MOMENT:
-RECOMMENDED LEAD PLATFORM:
-PLATFORM PRIORITY ORDER:
-COMMERCIAL APPEAL:
-
----
-{audio_features_block}
-
-{spotify_block}
-
-TRANSCRIPT CONTENT:
-{transcript_text}
-
-GENRE REASONING INSTRUCTIONS:
-- Use BPM + energy as the primary signal for subgenre.
-- If lyrics language is not English, factor language into subgenre.
-- Always name both a GENRE and a SUBGENRE (e.g. "Hip-hop / UK Drill")."""
-
+# ---------------------------------------------------------------------------
+# Internal helper — searches Pinecone marketing knowledge namespace
+# ---------------------------------------------------------------------------
+def _search_knowledge(query: str) -> str:
     try:
-        response = llm.invoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_message)
-        ])
-        analysis = response.content.strip()
-        print(f"   ✅ Marketing analysis complete (Tokens saved!)")
-        return analysis
+        vector_store = PineconeVectorStore(
+            index_name=PINECONE_INDEX_NAME,
+            embedding=embeddings,
+            namespace="marketing_knowledge",
+        )
+        results = vector_store.similarity_search(query, k=3)
+        if not results:
+            return ""
+        chunks = []
+        for doc in results:
+            header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or ""
+            chunks.append(f"[{header}]\n{doc.page_content}")
+        return "\n\n---\n\n".join(chunks)
     except Exception as e:
-        return f"Error analyzing marketing potential: {str(e)}"
+        print(f"   ⚠️ _search_knowledge failed: {e}")
+        return ""
 
 
+# ---------------------------------------------------------------------------
+# Internal helper — formats librosa dict into a readable LLM prompt block
+# ---------------------------------------------------------------------------
 def _format_audio_features(audio_features: dict) -> str:
     """
     Converts the librosa dict into a readable block for the LLM prompt.
-    Maps raw numbers to genre hints so Grok can reason about subgenre.
 
     BPM reference (approximate):
       60–80   → slow ballad, soul, lo-fi
@@ -143,7 +91,6 @@ def _format_audio_features(audio_features: dict) -> str:
     mode = audio_features.get("mode", "unknown")
     duration = audio_features.get("duration_seconds", 0)
 
-    # BPM genre hint
     if bpm < 80:
         bpm_hint = "slow tempo — suggests ballad, soul, lo-fi, or slowed phonk"
     elif bpm < 100:
@@ -159,7 +106,6 @@ def _format_audio_features(audio_features: dict) -> str:
     else:
         bpm_hint = "extreme tempo — suggests metal, hyperpop, or punk"
 
-    # Energy hint
     if energy < 0.3:
         energy_hint = "low energy — acoustic, intimate, or lo-fi feel"
     elif energy < 0.6:
@@ -180,6 +126,9 @@ Cross-reference BPM and energy with lyrical themes and language from the transcr
 Example reasoning: BPM ~95 + Spanish lyrics + danceability → likely reggaeton or Latin trap."""
 
 
+# ---------------------------------------------------------------------------
+# Tool — analyze_marketing_potential (single definition)
+# ---------------------------------------------------------------------------
 @tool
 def analyze_marketing_potential(
     video_id: str,
@@ -202,10 +151,10 @@ def analyze_marketing_potential(
       spotify_genres: comma-separated genres from get_artist_info tool
 
     Args:
-        video_id:       The YouTube video ID (e.g. 'H5v3kku4y6Q').
+        video_id:        The YouTube video ID (e.g. 'H5v3kku4y6Q').
         transcript_text: Transcript content retrieved by search_transcript.
-        audio_features: Optional JSON string with BPM, energy, key, mode from librosa.
-        spotify_genres: Optional comma-separated Spotify genre tags (e.g. 'afrobeats, afropop').
+        audio_features:  Optional JSON string with BPM, energy, key, mode from librosa.
+        spotify_genres:  Optional comma-separated Spotify genre tags.
     """
     print(f"\n📊 [analyze_marketing_potential] Analyzing video: {video_id}")
 
@@ -218,13 +167,12 @@ def analyze_marketing_potential(
 
     print(f"   📝 Transcript sample received ({len(transcript_text)} chars)")
 
-    # Parse audio_features if passed as JSON string from agent
+    # Parse audio_features JSON string
     parsed_audio = {}
     if audio_features:
         try:
-            import json
             parsed_audio = json.loads(audio_features)
-            print(f"   🎵 Audio features received: BPM={parsed_audio.get('bpm')} | "
+            print(f"   🎵 Audio features: BPM={parsed_audio.get('bpm')} | "
                   f"Energy={parsed_audio.get('energy')} | "
                   f"Key={parsed_audio.get('key')} {parsed_audio.get('mode')}")
         except Exception:
@@ -241,6 +189,7 @@ def analyze_marketing_potential(
   not necessarily the exact subgenre of this specific song."""
         print(f"   🎤 Spotify genres: {spotify_genres}")
 
+    # Search marketing knowledge base
     knowledge = _search_knowledge("marketing strategy platform TikTok audience release genre")
 
     system_prompt = f"""You are DropOperator AI — a professional music marketing strategist.
@@ -290,56 +239,3 @@ GENRE REASONING INSTRUCTIONS:
         error_msg = f"Error analyzing marketing potential for video '{video_id}': {str(e)}"
         print(f"   ❌ {error_msg}")
         return error_msg
-    
-    # backend/tools/analyze_marketing.py
-
-# ... (tavo dabartinis kodas lieka nepakeistas) ...
-
-@tool
-def extract_audio_features(file_path: str) -> str:
-    """
-    CRITICAL: Use this tool FIRST whenever you are asked about the song's genre, 
-    BPM, tempo, energy, or musical mood. 
-    This tool runs a digital signal processing pipeline on the real MP3/WAV file.
-    
-    Args:
-        file_path: The local path to the downloaded audio file (e.g., 'downloads/song.mp3').
-    Returns:
-        A JSON string containing bpm, energy, key, mode, and duration_seconds.
-    """
-    import librosa
-    import numpy as np
-    import json
-
-    print(f"\n🎵 [extract_audio_features] Processing file: {file_path}")
-    try:
-        # Load audio file (low sample rate 22050Hz for faster backend execution)
-        y, sr = librosa.load(file_path, sr=22050)
-        
-        # 1. Extract Tempo & BPM
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = float(tempo[0]) if isinstance(tempo, np.ndarray) else float(tempo)
-        
-        # 2. Extract Energy (RMS) scaled to 0.0 - 1.0
-        rms = librosa.feature.rms(y=y)
-        energy = float(np.mean(rms)) * 10
-        if energy > 1.0: 
-            energy = 1.0
-            
-        # 3. Get Duration
-        duration = float(librosa.get_duration(y=y, sr=sr))
-        
-        features = {
-            "bpm": round(bpm, 1),
-            "energy": round(energy, 2),
-            "key": "C",  # Default placeholder for musical key
-            "mode": "major",
-            "duration_seconds": int(duration)
-        }
-        
-        print(f"   ✅ Librosa processing complete: BPM={features['bpm']} | Energy={features['energy']}")
-        return json.dumps(features)
-        
-    except Exception as e:
-        print(f"   ❌ Librosa pipeline failed: {str(e)}")
-        return json.dumps({"bpm": 0, "energy": 0, "error": str(e)})

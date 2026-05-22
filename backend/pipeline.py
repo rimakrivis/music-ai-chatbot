@@ -144,7 +144,7 @@ def extract_audio_features(audio_path: str) -> dict:
         # --- BPM (tempo) ---
         # librosa.beat.beat_track returns (tempo, beat_frames)
         tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = round(float(tempo), 1)
+        bpm = round(float(tempo[0]) if hasattr(tempo, '__len__') else float(tempo), 1)
         print(f"[pipeline] BPM: {bpm}")
 
         # --- Energy (RMS) ---
@@ -443,7 +443,7 @@ def fetch_transcript(youtube_url: str) -> dict:
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 config = aai.TranscriptionConfig(
                     language_detection=True,
-                    speech_models=[aai.SpeechModel.universal]
+                    speech_model=aai.SpeechModel.universal,
                 )
                 transcriber = aai.Transcriber(config=config)
                 aai_transcript = transcriber.transcribe(audio_path)
@@ -569,7 +569,7 @@ def get_transcript_from_pinecone(video_id: str) -> dict | None:
         full_text = " ".join([doc.page_content for doc in results])
         return {
             "transcript_text": full_text,
-            "word_count": len(full_text.split()),
+            "word_count": len(full_text.split())
         }
 
     except Exception as e:

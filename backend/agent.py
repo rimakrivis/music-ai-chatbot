@@ -1,21 +1,19 @@
 # backend/agent.py
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 from tools.search_transcript import search_transcript
 from tools.extract_lyrics import extract_lyrics
-from tools.analyze_marketing import analyze_marketing_potential, extract_audio_features
+from tools.analyze_marketing import analyze_marketing_potential
 from tools.get_artist_info import get_artist_info
 from tools.find_release_timing import find_release_timing
 from tools.search_marketing_knowledge import search_marketing_knowledge
 from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
 
 # ---------------------------------------------------------------------------
-# Model — Grok 4.3 via xAI (OpenAI-compatible endpoint)
-# reasoning_effort="medium" gives quality press releases and pitches
-# without the cost of full reasoning mode
+# Model — Grok via xAI (OpenAI-compatible endpoint)
 # ---------------------------------------------------------------------------
 llm = ChatOpenAI(
     model=GROK_MODEL,
@@ -27,7 +25,7 @@ llm = ChatOpenAI(
 print(f"[agent] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT} | endpoint: xAI")
 
 # ---------------------------------------------------------------------------
-# Tools
+# Tools — 6 tools, no extract_audio_features (that's a pipeline function, not agent tool)
 # ---------------------------------------------------------------------------
 TOOLS = [
     search_transcript,
@@ -46,12 +44,9 @@ checkpointer = InMemorySaver()
 # ---------------------------------------------------------------------------
 # System prompt builder
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# System prompt builder
-# ---------------------------------------------------------------------------
 def _build_system_prompt(
-    video_id: str, 
-    video_title: str = "", 
+    video_id: str,
+    video_title: str = "",
     video_channel: str = "",
     audio_features_text: str = ""
 ) -> str:
@@ -73,16 +68,16 @@ AUDIO ANALYSIS FACTS (Provided by backend system):
 
 CRITICAL BOUNDARIES & INTENT RECOGNITION:
 You must strictly answer ONLY what the user explicitly asks. Do not over-generate.
-- If user asks for GENRE or MOOD -> Only answer with the musical analysis. DO NOT generate marketing plans or dates.
-- If user asks for MARKETING PLAN -> Proceed with the full marketing pipeline.
+- If user asks for GENRE or MOOD → Only answer with the musical analysis. DO NOT generate marketing plans or dates.
+- If user asks for MARKETING PLAN → Proceed with the full marketing pipeline.
 
 DROPOPERATOR TASK ROUTING:
 When discussing specific action items (e.g. after a marketing plan), you MUST suggest which Calendar Event the user should open:
-- Cover art/photoshoots -> "Cover Art Deadline"
-- Press release/Bio -> "Prepare PR Release"
-- Playlist pitching -> "Spotify Pitch"
-- Social media content -> "Social Media / Promo"
-- Distribution -> "Release Upload"
+- Cover art/photoshoots → "Cover Art Deadline"
+- Press release/Bio → "Prepare PR Release"
+- Playlist pitching → "Spotify Pitch"
+- Social media content → "Social Media / Promo"
+- Distribution → "Release Upload"
 
 TEMPLATE VARIABLES — use these exactly when filling in any template:
 - Song Title: "{video_title}"
@@ -96,7 +91,7 @@ TOOLS:
 - analyze_marketing_potential → requires transcript_text from search_transcript
 - get_artist_info → Spotify stats, popularity, top tracks, genres
 - find_release_timing → release date strategy, teaser schedule
-- search_marketing_knowledge → YOUR PRIMARY KNOWLEDGE SOURCE.
+- search_marketing_knowledge → YOUR PRIMARY KNOWLEDGE SOURCE for how-to questions
 
 MANDATORY TOOL CALL ORDER:
 
@@ -109,7 +104,7 @@ MANDATORY TOOL CALL ORDER:
    STEP 1 → search_transcript(video_id="{video_id}", query="mood energy genre chorus hook feeling")
    STEP 2 → analyze_marketing_potential(video_id="{video_id}", transcript_text=<step 1 result>, audio_features="Use the AUDIO ANALYSIS FACTS provided above")
    STEP 3 → find_release_timing(genre=<genre from step 2>, audience_size=<known or ask>)
-   STEP 4 → Suggest DropOperator Calendar Events (e.g., "Cover Art Deadline", "Prepare PR Release") for the user to execute the plan.
+   STEP 4 → Suggest DropOperator Calendar Events for the user to execute the plan.
 
 3. HOW-TO / SPECIFIC ADVICE (e.g., radio, PR, social media):
    STEP 1 → search_marketing_knowledge(query=<user question>)
@@ -121,7 +116,7 @@ MANDATORY TOOL CALL ORDER:
 def create_music_agent():
     print("\n🤖 [agent] Creating music agent...")
 
-    agent = create_agent(
+    agent = create_react_agent(
         model=llm,
         tools=TOOLS,
         checkpointer=checkpointer,
@@ -141,16 +136,16 @@ async def run_agent(
     video_id: str,
     video_title: str = "",
     video_channel: str = "",
-    audio_features_dict: dict = None
+    audio_features: dict = None,       # ← matches main.py call signature
 ) -> dict:
     print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id}")
     print(f"   Message: '{message}'")
 
-    # Convert audio features to a string for the prompt
+    # Convert audio features dict to string for the system prompt
     audio_features_text = ""
-    if audio_features_dict and audio_features_dict.get('bpm'):
+    if audio_features and audio_features.get("bpm"):
         import json
-        audio_features_text = json.dumps(audio_features_dict)
+        audio_features_text = json.dumps(audio_features)
 
     system_prompt = _build_system_prompt(video_id, video_title, video_channel, audio_features_text)
 
@@ -159,8 +154,6 @@ async def run_agent(
             "thread_id": session_id
         }
     }
-    
-    # ... (TOLIAU EINA TAVO SENAS KODAS: agent_input = { "messages": [...] } ir t.t. Nieko daugiau netrink!)
 
     agent_input = {
         "messages": [
