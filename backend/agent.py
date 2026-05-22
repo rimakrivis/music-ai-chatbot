@@ -1,11 +1,4 @@
 # backend/agent.py
-# The LangChain agent — the AI brain of the music chatbot.
-# Wires all 6 tools into create_agent (LangChain 1.0).
-# Uses InMemorySaver for per-session conversation memory.
-# Injects video_id into the system prompt at runtime so tools
-# know which Pinecone namespace to query.
-# Tracks tools_used[] so the frontend can show tool badges.
-
 from langchain.agents import create_agent
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
@@ -17,16 +10,21 @@ from tools.analyze_marketing import analyze_marketing_potential
 from tools.get_artist_info import get_artist_info
 from tools.find_release_timing import find_release_timing
 from tools.search_marketing_knowledge import search_marketing_knowledge
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
 
 # ---------------------------------------------------------------------------
-# Model
+# Model — Grok 4.3 via xAI (OpenAI-compatible endpoint)
+# reasoning_effort="medium" gives quality press releases and pitches
+# without the cost of full reasoning mode
 # ---------------------------------------------------------------------------
 llm = ChatOpenAI(
-    model="gpt-4o",
-    temperature=0.3,
-    api_key=OPENAI_API_KEY
+    model=GROK_MODEL,
+    temperature=GROK_TEMPERATURE,
+    api_key=XAI_API_KEY,
+    base_url="https://api.x.ai/v1",
+    reasoning_effort=GROK_REASONING_EFFORT,
 )
+print(f"[agent] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT} | endpoint: xAI")
 
 # ---------------------------------------------------------------------------
 # Tools
@@ -121,7 +119,7 @@ def create_music_agent():
     print("\n🤖 [agent] Creating music agent...")
 
     agent = create_agent(
-        model="openai:gpt-4o",
+        model=llm,
         tools=TOOLS,
         checkpointer=checkpointer,
     )
@@ -164,7 +162,6 @@ async def run_agent(
 
         all_messages = result.get("messages", [])
 
-        # Extract the last non-empty AI response
         response_text = ""
         for msg in reversed(all_messages):
             if isinstance(msg, AIMessage) and msg.content:
@@ -175,7 +172,6 @@ async def run_agent(
         if not response_text:
             response_text = "I processed your request but could not generate a response. Please try again."
 
-        # Collect tool names from ToolMessages
         tools_used = []
         for msg in all_messages:
             if isinstance(msg, ToolMessage):
@@ -200,5 +196,4 @@ async def run_agent(
             "tools_used": [],
             "session_id": session_id,
             "error": error_msg
-        } 
-
+        }

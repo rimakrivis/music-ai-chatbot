@@ -3,7 +3,7 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from langchain_core.messages import SystemMessage, HumanMessage
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
 
 PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai-chat")
 
@@ -13,10 +13,13 @@ embeddings = OpenAIEmbeddings(
 )
 
 llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.4,
-    api_key=OPENAI_API_KEY
+    model=GROK_MODEL,
+    temperature=GROK_TEMPERATURE,
+    api_key=XAI_API_KEY,
+    base_url="https://api.x.ai/v1",
+    reasoning_effort=GROK_REASONING_EFFORT,
 )
+print(f"[analyze_marketing] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT}")
 
 
 def _search_knowledge(query: str) -> str:

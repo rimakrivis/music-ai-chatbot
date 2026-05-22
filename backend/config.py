@@ -1,10 +1,8 @@
 """
 config.py — Environment variable loading for Music AI Chatbot.
-
 Reads all secrets from .env (local) or Railway environment (production).
 Import this module wherever you need API keys or environment settings.
 """
-
 import os
 from dotenv import load_dotenv
 
@@ -14,6 +12,12 @@ load_dotenv()
 
 # --- OpenAI ---
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+
+# --- xAI (Grok) ---
+XAI_API_KEY: str = os.getenv("XAI_API_KEY", "")
+GROK_MODEL: str = "grok-4.3"
+GROK_REASONING_EFFORT: str = "medium"
+GROK_TEMPERATURE: float = 0.7
 
 # --- Spotify ---
 SPOTIFY_CLIENT_ID: str = os.getenv("SPOTIFY_CLIENT_ID", "")
@@ -25,7 +29,6 @@ ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
 # --- Supabase ---
 SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
-
 
 # --- LangSmith ---
 LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
@@ -39,6 +42,7 @@ ENVIRONMENT: str = os.getenv("ENVIRONMENT", "local")
 
 # --- Derived flags ---
 IS_PRODUCTION: bool = ENVIRONMENT == "production"
+
 
 # --- Startup validation ---
 def validate_config() -> None:
@@ -54,16 +58,19 @@ def validate_config() -> None:
         "SUPABASE_URL": SUPABASE_URL,
         "SUPABASE_ANON_KEY": SUPABASE_ANON_KEY,
     }
-
     missing = [name for name, value in required.items() if not value]
-
     if missing:
         raise ValueError(
             f"[config] Missing required environment variables: {', '.join(missing)}\n"
             "Copy .env.example to .env and fill in your values."
         )
 
+    # Warn if Grok key is missing (not required to start, but needed for marketing features)
+    if not XAI_API_KEY:
+        print("[config] WARNING: XAI_API_KEY not set — Grok features will not work")
+    else:
+        print(f"[config] Grok model: {GROK_MODEL} (reasoning: {GROK_REASONING_EFFORT}) ✓")
+
     print(f"[config] Environment: {ENVIRONMENT}")
     print(f"[config] LangSmith tracing: {LANGCHAIN_TRACING_V2}")
-    print(f"[config] Vector store: Pinecone")
     print("[config] All required environment variables loaded ✓")
