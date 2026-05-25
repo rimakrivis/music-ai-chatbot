@@ -9,7 +9,8 @@ export interface AnalyzeResponse {
   word_count: number;
   source: string;
   chunks_created: number;
-  collection_name: string;
+  namespace: string;
+  audio_features?: Record<string, number>;  // present when uploaded via /analyze-audio
   status: string;
 }
 
@@ -43,7 +44,18 @@ export async function analyzeVideo(youtube_url: string): Promise<AnalyzeResponse
     console.error("[api] analyzeVideo failed:", err);
     throw new Error(`Analyze failed: ${res.status} — ${err}`);
   }
-  const data = await res.json();
+  const data: AnalyzeResponse = await res.json();
+
+  if (data.audio_features && Object.keys(data.audio_features).length > 0) {
+    localStorage.setItem(
+      `audio_features_${data.video_id}`,
+      JSON.stringify(data.audio_features)
+    );
+    console.log("[api] analyzeVideo — audio_features saved:", data.audio_features);
+  } else {
+    console.log("[api] analyzeVideo — no audio_features (yt-dlp blocked or librosa failed)");
+  }
+
   console.log("[api] analyzeVideo ✓", data);
   return data;
 }
@@ -53,13 +65,24 @@ export async function sendMessage(
   message: string,
   session_id: string,
   video_title: string,
-  video_channel: string = ""
+  video_channel: string = "",
+  audio_features?: Record<string, number>
 ): Promise<ChatResponse> {
   console.log("[api] sendMessage →", { video_id, message, session_id });
+  if (audio_features) {
+    console.log("[api] sendMessage — audio_features included:", audio_features);
+  }
   const res = await fetch(`${API_URL}/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ video_id, message, session_id, video_title, video_channel }),
+    body: JSON.stringify({
+      video_id,
+      message,
+      session_id,
+      video_title,
+      video_channel,
+      audio_features: audio_features ?? null,  // ← was missing before
+    }),
   });
   if (!res.ok) {
     const err = await res.text();
@@ -105,8 +128,14 @@ export async function analyzeLyrics(
   console.log("[api] analyzeLyrics ✓", data);
   return data;
 }
-export async function analyzeAudioFile(file: File, sessionId: string, title: string, artist: string): Promise<AnalyzeResponse> {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+export async function analyzeAudioFile(
+  file: File,
+  sessionId: string,
+  title: string,
+  artist: string
+): Promise<AnalyzeResponse> {
+  console.log("[api] analyzeAudioFile →", { filename: file.name, title, artist });
   const formData = new FormData();
   formData.append("file", file);
   formData.append("session_id", sessionId);
@@ -123,6 +152,19 @@ export async function analyzeAudioFile(file: File, sessionId: string, title: str
     throw new Error(errData.detail || "Audio analysis failed");
   }
 
-  return response.json();
-}
+  const data: AnalyzeResponse = await response.json();
 
+  // Save audio_features to localStorage so the chat page can pass them to the agent
+  if (data.audio_features && Object.keys(data.audio_features).length > 0) {
+    localStorage.setItem(
+      `audio_features_${data.video_id}`,
+      JSON.stringify(data.audio_features)
+    );
+    console.log("[api] analyzeAudioFile — audio_features saved to localStorage:", data.audio_features);
+  } else {
+    console.log("[api] analyzeAudioFile — no audio_features in response (librosa may have failed)");
+  }
+
+  console.log("[api] analyzeAudioFile ✓", { video_id: data.video_id, chunks: data.chunks_created });
+  return data;
+}

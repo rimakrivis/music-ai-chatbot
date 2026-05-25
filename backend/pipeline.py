@@ -203,6 +203,41 @@ def extract_audio_features(audio_path: str) -> dict:
         print(f"[pipeline] ⚠️ Audio feature extraction failed (non-fatal): {e}")
         return {}
 
+# -------------------------------------------------------
+# NEW — fetch_audio_features_background(video_id)
+#
+# Downloads audio ONLY for librosa feature extraction.
+# Called after transcript is already fetched via captions.
+# Returns {} silently on any failure.
+# -------------------------------------------------------
+async def fetch_audio_features_background(video_id: str) -> dict:
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _fetch_audio_features_sync, video_id)
+
+
+def _fetch_audio_features_sync(video_id: str) -> dict:
+    print(f"[pipeline] 🎵 Background audio feature extraction for: {video_id}")
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            audio_path = os.path.join(tmp_dir, "audio.mp3")
+            ydl_opts = {
+                "format": "bestaudio/best",
+                "outtmpl": os.path.join(tmp_dir, "audio"),
+                "quiet": True,
+                "no_warnings": True,
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "128",
+                }],
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+            return extract_audio_features(audio_path)
+    except Exception as e:
+        print(f"[pipeline] ⚠️ Background audio feature extraction failed (non-fatal): {e}")
+        return {}
 
 # -------------------------------------------------------
 # HELPER — fetch video metadata

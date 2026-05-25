@@ -31,7 +31,7 @@ def search_marketing_knowledge(query: str) -> str:
             return "No relevant marketing knowledge found."
         output = []
         for doc in results:
-            header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or ""
+            header = doc.metadata.get("section") or ""
             output.append(f"[{header}]\n{doc.page_content}")
         print(f"   📚 Retrieved {len(results)} marketing knowledge chunks")
         return "\n\n---\n\n".join(output)

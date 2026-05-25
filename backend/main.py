@@ -197,14 +197,10 @@ async def health():
 # /analyze — YouTube URL → Pinecone
 # ---------------------------------------------------------------------------
 
+# REPLACE this entire function in main.py:
+
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest):
-    """
-    Fetches YouTube transcript (4-method cascade) and embeds into Pinecone.
-    Returns video metadata + embedding stats.
-
-    For non-English songs with poor auto-captions, use POST /analyze-lyrics instead.
-    """
     print(f"\n📥 [/analyze] URL: {request.youtube_url}")
 
     try:
@@ -218,61 +214,42 @@ async def analyze(request: AnalyzeRequest):
         print(f"   ❌ /analyze error: {e}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-    try:
+    # Run embedding + audio feature extraction concurrently
+    # Audio features are only missing if transcript came from captions (not yt-dlp)
+    existing_audio_features = transcript_data.get("audio_features", {})
+
+    import asyncio
+    from pipeline import fetch_audio_features_background
+
+    if existing_audio_features:
+        # yt-dlp path already ran librosa — no extra download needed
         embed_data = chunk_and_embed(
             video_id=transcript_data["video_id"],
             transcript_text=transcript_data["transcript_text"],
         )
-        print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
-    except Exception as e:
-        print(f"   ❌ /analyze embed error: {e}")
-        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
+        audio_features = existing_audio_features
+    else:
+        # Caption path — run embedding + audio download in parallel
+        audio_task = fetch_audio_features_background(transcript_data["video_id"])
 
-    return {**transcript_data, **embed_data}
+        try:
+            embed_data = chunk_and_embed(
+                video_id=transcript_data["video_id"],
+                transcript_text=transcript_data["transcript_text"],
+            )
+            audio_features = await audio_task
+        except Exception as e:
+            print(f"   ❌ /analyze step error: {e}")
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")   
 
+    if audio_features:
+        print(f"   🎵 Audio features: BPM={audio_features.get('bpm')} | "
+              f"Energy={audio_features.get('energy')} | "
+              f"Key={audio_features.get('key')} {audio_features.get('mode')}")
+    else:
+        print(f"   ℹ️  Audio features unavailable (yt-dlp blocked or librosa failed)")
 
-# ---------------------------------------------------------------------------
-# /analyze-lyrics — paste lyrics → Pinecone
-# ---------------------------------------------------------------------------
-
-@app.post("/analyze-lyrics", response_model=AnalyzeLyricsResponse)
-async def analyze_lyrics(request: AnalyzeLyricsRequest):
-    """
-    Accepts manually pasted lyrics and embeds them into Pinecone.
-
-    Use when:
-      - The YouTube video has no captions
-      - Auto-transcript quality is poor (common for Lithuanian, Latvian, Estonian)
-      - You already have correct lyrics from Genius or another source
-    """
-    print(f"\n📥 [/analyze-lyrics] video_id: {request.video_id} | artist: {request.artist}")
-
-    if not request.lyrics_text.strip():
-        raise HTTPException(status_code=400, detail="lyrics_text cannot be empty.")
-
-    if len(request.lyrics_text.strip()) < 20:
-        raise HTTPException(status_code=400, detail="lyrics_text is too short. Paste the full lyrics.")
-
-    try:
-        embed_data = chunk_and_embed(
-            video_id=request.video_id,
-            transcript_text=request.lyrics_text,
-        )
-        print(f"   Embedded: {embed_data.get('chunks_created', 0)} chunks")
-    except Exception as e:
-        print(f"   ❌ /analyze-lyrics error: {e}")
-        raise HTTPException(status_code=500, detail=f"Lyrics embedding failed: {str(e)}")
-
-    return AnalyzeLyricsResponse(
-        video_id=request.video_id,
-        title=request.title,
-        artist=request.artist,
-        word_count=len(request.lyrics_text.split()),
-        chunks_created=embed_data["chunks_created"],
-        namespace=embed_data["namespace"],
-        status="success",
-    )
-
+    return {**transcript_data, **embed_data, "audio_features": audio_features}
 
 # ---------------------------------------------------------------------------
 # /analyze-audio — upload file → Grok Whisper → Pinecone
@@ -343,63 +320,61 @@ async def analyze_audio(
             audio_features = {}
 
         # 6 — AssemblyAI transcription via direct REST API (bypasses SDK version issues)
+        import asyncio
         import httpx as _httpx
-        import time as _time
 
         _aai_key = os.getenv("ASSEMBLYAI_API_KEY")
         _headers = {"authorization": _aai_key}
 
-        print("   Uploading to AssemblyAI...")
-        with open(tmp_path, "rb") as _f:
-            _upload_resp = _httpx.post(
-                "https://api.assemblyai.com/v2/upload",
-                headers=_headers,
-                content=_f.read(),
-                timeout=120,
-            )
-        _upload_resp.raise_for_status()
-        _upload_url = _upload_resp.json()["upload_url"]
-        print(f"   ✅ Uploaded to AssemblyAI CDN")
+        async with _httpx.AsyncClient(timeout=120) as _client:
+            print("   Uploading to AssemblyAI...")
+            with open(tmp_path, "rb") as _f:
+                _upload_resp = await _client.post(
+                    "https://api.assemblyai.com/v2/upload",
+                    headers=_headers,
+                    content=_f.read(),
+                )
+            _upload_resp.raise_for_status()
+            _upload_url = _upload_resp.json()["upload_url"]
+            print(f"   ✅ Uploaded to AssemblyAI CDN")
 
-        print("   Submitting transcription job...")
-        _transcript_resp = _httpx.post(
-            "https://api.assemblyai.com/v2/transcript",
-            headers={**_headers, "content-type": "application/json"},
-            json={
-                "audio_url": _upload_url,
-                "language_detection": True,
-                "speech_models": ["universal-2"],
-            },
-            timeout=30,
-        )
-        if not _transcript_resp.is_success:
-            raise HTTPException(
-                status_code=422,
-                detail=f"AssemblyAI job submission failed: {_transcript_resp.text}",
+            print("   Submitting transcription job...")
+            _transcript_resp = await _client.post(
+                "https://api.assemblyai.com/v2/transcript",
+                headers={**_headers, "content-type": "application/json"},
+                json={
+                    "audio_url": _upload_url,
+                    "language_detection": True,
+                    "speech_models": ["universal-2"],
+                },
             )
-        _transcript_id = _transcript_resp.json()["id"]
-        print(f"   Job ID: {_transcript_id}")
-
-        while True:
-            _poll = _httpx.get(
-                f"https://api.assemblyai.com/v2/transcript/{_transcript_id}",
-                headers=_headers,
-                timeout=30,
-            )
-            _poll.raise_for_status()
-            _status = _poll.json()["status"]
-            if _status == "completed":
-                transcript_text = _poll.json()["text"].strip()
-                print(f"   ✅ AssemblyAI complete ({len(transcript_text)} chars)")
-                break
-            elif _status == "error":
+            if not _transcript_resp.is_success:
                 raise HTTPException(
                     status_code=422,
-                    detail=f"Transcription failed: {_poll.json().get('error')}",
+                    detail=f"AssemblyAI job submission failed: {_transcript_resp.text}",
                 )
-            else:
-                print(f"   ⏳ {_status} — polling...")
-                _time.sleep(3)
+            _transcript_id = _transcript_resp.json()["id"]
+            print(f"   Job ID: {_transcript_id}")
+
+            while True:
+                await asyncio.sleep(3)
+                _poll = await _client.get(
+                    f"https://api.assemblyai.com/v2/transcript/{_transcript_id}",
+                    headers=_headers,
+                )
+                _poll.raise_for_status()
+                _status = _poll.json()["status"]
+                if _status == "completed":
+                    transcript_text = _poll.json()["text"].strip()
+                    print(f"   ✅ AssemblyAI complete ({len(transcript_text)} chars)")
+                    break
+                elif _status == "error":
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"Transcription failed: {_poll.json().get('error')}",
+                    )
+                else:
+                    print(f"   ⏳ {_status} — polling...")
 
     except HTTPException:
         raise
@@ -611,7 +586,7 @@ async def event_chat(request: dict):
         if results:
             chunks = []
             for doc in results:
-                header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or ""
+                header = doc.metadata.get("section") or ""
                 chunks.append(f"[{header}]\n{doc.page_content}")
             knowledge_context = "\n\n---\n\n".join(chunks)
             print(f"   📚 Retrieved {len(results)} knowledge chunks")

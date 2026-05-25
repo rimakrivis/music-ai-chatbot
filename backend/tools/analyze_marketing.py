@@ -52,7 +52,7 @@ def _search_knowledge(query: str) -> str:
             return ""
         chunks = []
         for doc in results:
-            header = doc.metadata.get("Header 2") or doc.metadata.get("Header 1") or ""
+            header = doc.metadata.get("section") or ""
             chunks.append(f"[{header}]\n{doc.page_content}")
         return "\n\n---\n\n".join(chunks)
     except Exception as e:
@@ -221,11 +221,21 @@ TRANSCRIPT CONTENT:
 {transcript_text}
 
 GENRE REASONING INSTRUCTIONS:
-- If audio features are present: use BPM + energy as primary signal for subgenre
-- If Spotify genres are present: use them to confirm or narrow the subgenre
-- If lyrics language is not English: factor language into subgenre (e.g. French = French drill/rap, Spanish = Latin trap/reggaeton)
-- Combine all three signals for the most accurate genre + subgenre answer
-- Always name both a GENRE and a SUBGENRE (e.g. "Hip-hop / UK Drill", "Afrobeats / Amapiano")"""
+- FIRST: detect the language of the lyrics. This is your most important signal.
+- Map language to regional genre context BEFORE looking at audio features:
+    - Lithuanian / Latvian / Estonian → Baltic/Eastern European pop
+    - Spanish → Latin pop / reggaeton / Latin trap
+    - French → French rap / chanson / afro-French
+    - Portuguese (BR) → pagode / funk carioca / sertanejo / Brazilian pop
+    - Arabic → khaleeji / shaabi / Arabic pop
+    - Korean → K-pop / K-hip-hop
+    - Non-English in general → regional pop of that language's origin country
+- SECOND: use lyrical themes and mood to narrow the subgenre (e.g. children's themes → children's pop)
+- THIRD: use BPM + energy to confirm energy level only — never use them to override language-based genre
+- If Spotify genres are present: use them to confirm or narrow further
+- Always name both a GENRE and a SUBGENRE (e.g. "Baltic Pop / Children's Pop", "Latin Pop / Reggaeton")
+
+"""
 
     try:
         response = llm.invoke([

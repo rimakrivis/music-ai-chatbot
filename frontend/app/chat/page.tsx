@@ -1,287 +1,382 @@
 "use client";
 
-import { useState, useEffect, useRef, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
-import ChatMessage, { Message } from "@/components/ChatMessage";
-import ChatInput from "@/components/ChatInput";
-import TranscriptPanel from "@/components/TranscriptPanel";
-import CalendarPanel from "@/components/CalendarPanel";
-import TodoList from "@/components/TodoList";
+import { useState, useCallback, useEffect } from "react";
+import MiniCalendar from "@/components/dashboard/MiniCalendar";
+import TodoListPanel from "@/components/dashboard/TodoListPanel";
+import ProgressBar from "@/components/dashboard/ProgressBar";
+import DailyFeed from "@/components/dashboard/DailyFeed";
+import UploadPanel from "@/components/dashboard/UploadPanel";
+import AIChatbot from "@/components/dashboard/AIChatbot";
+import EventDrawer from "@/components/dashboard/EventDrawer";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
-import { ExtractedTasks } from "@/lib/types";
-import WeeklyAgenda from "@/components/WeeklyAgenda";
-import { sendMessage } from "@/lib/api";
+import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
+import { sendMessage, AnalyzeResponse } from "@/lib/api";
 
-const STARTER_PROMPTS = [
-  "What is this song about?",
-  "Extract the lyrics and format them cleanly.",
-  "What is the marketing potential for this song?",
-  "Tell me about the artist's Spotify stats.",
-  "When should this song be released and on which platforms?",
-];
+export default function DashboardPage() {
+  const [sessionId, setSessionId] = useState<string>("");
 
-
-interface MessageWithTasks extends Message {
-  tasks?: ExtractedTasks;
-  tasksConfirmed?: boolean;
-}
-
-interface CalendarEvent {
-  id: number;
-  title: string;
-  date: string;
-  type: string;
-}
-
-function ChatPageInner() {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-
-  const video_id = searchParams.get("video_id") || "";
-  const video_title = searchParams.get("title") || "Unknown Video";
-  const video_channel = searchParams.get("channel") || "";
-
-  const [sessionId] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
+  useEffect(() => {
     let stored = localStorage.getItem("music_ai_session_id");
     if (!stored) {
       stored = crypto.randomUUID();
       localStorage.setItem("music_ai_session_id", stored);
     }
-    return stored;
+    setSessionId(stored);
+  }, []);
+  const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(() => {
+    if (typeof window === "undefined") return null;
+    const stored = localStorage.getItem("music_ai_last_video");
+    return stored ? JSON.parse(stored) : null;
   });
 
-  const [messages, setMessages] = useState<MessageWithTasks[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sidebarRefresh, setSidebarRefresh] = useState(0);
-  const [chatCollapsed, setChatCollapsed] = useState(false);
-  const [agendaEvents, setAgendaEvents] = useState<CalendarEvent[]>([]);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [audioFeatures, setAudioFeatures] = useState<Record<string, number> | null>(null);
+
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      role: "assistant",
+      content:
+        "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
+    },
+  ]);
+  const [isChatLoading, setIsChatLoading] = useState(false);
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  useEffect(() => {
-    if (!video_id) router.push("/");
-  }, [video_id, router]);
+  // ── Load from Supabase ───────────────────────────────────────────────────
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  const loadFromSupabase = useCallback(async () => {
+    try {
+      const [eventsRes, todosRes] = await Promise.all([
+        fetch(`${API}/calendar/events/${sessionId}`),
+        fetch(`${API}/todos/${sessionId}`),
+      ]);
+      const eventsData = await eventsRes.json();
+      const todosData = await todosRes.json();
 
-  // Fetch events for weekly agenda
-  useEffect(() => {
-    async function fetchAgendaEvents() {
-      console.log("🔍 fetching with sessionId:", sessionId);
-      try {
-        const res = await fetch(`${API}/calendar/events/${sessionId}`);
-        const data = await res.json();
-        console.log("📅 agenda events:", data);
-        setAgendaEvents(data.events || []);
-      } catch (e) {
-        console.error("Failed to fetch agenda events", e);
-      }
+      setEvents(
+        eventsData.events?.length > 0
+          ? eventsData.events.map((e: any) => ({
+              id: e.id,
+              title: e.title,
+              date: e.date,
+              type: e.type,
+              completed: e.status === "done",
+              savedContent: e.saved_content ?? "",
+              linkedTodoId: e.linked_todo_id ?? undefined,
+            }))
+          : []
+      );
+      setTodos(
+        todosData.items?.length > 0
+          ? todosData.items.map((t: any) => ({
+              id: t.id,
+              title: t.title,
+              completed: t.status === "done",
+              linkedEventId: t.linked_event_id ?? undefined,
+            }))
+          : []
+      );
+    } catch (e) {
+      console.error("[page] Failed to load from Supabase", e);
     }
-    fetchAgendaEvents();
-  }, [sessionId, sidebarRefresh]);
+  }, [sessionId, API]);
 
-  async function handleSend(text: string) {
-    if (!video_id) return;
-    const userMessage: MessageWithTasks = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMessage]);
-    setLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (sessionId) loadFromSupabase();
+  }, [sessionId, loadFromSupabase]);
+
+  // ── Load audio features from localStorage when video changes ────────────
+
+  useEffect(() => {
+    if (!videoInfo?.video_id) return;
+    const stored = localStorage.getItem(`audio_features_${videoInfo.video_id}`);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setAudioFeatures(parsed);
+        console.log("🎵 Loaded audio features:", parsed);
+      } catch (e) {
+        console.error("[page] Failed to parse audio features", e);
+        setAudioFeatures(null);
+      }
+    } else {
+      setAudioFeatures(null);
+    }
+  }, [videoInfo?.video_id]);
+
+  // ── Video loaded ─────────────────────────────────────────────────────────
+
+  const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
+    localStorage.setItem("music_ai_last_video", JSON.stringify(video));
+    setVideoInfo(video);
+    setChatMessages([
+      {
+        role: "assistant",
+        content: `✅ Loaded **"${video.title}"** by ${video.channel}. I've indexed the transcript (${video.word_count} words). Ask me anything — lyrics, marketing plan, release timing, or Spotify stats!`,
+      },
+    ]);
+    setEvents([]);
+    setTodos([]);
+  }, []);
+
+  // ── Todo toggle — also syncs linked event ────────────────────────────────
+
+  const handleToggleTodo = useCallback(
+    async (id: number) => {
+      const todo = todos.find((t) => t.id === id);
+      if (!todo) return;
+      const newCompleted = !todo.completed;
+
+      // Optimistic update
+      setTodos((prev) =>
+        prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t))
+      );
+
+      // If the todo has a linked event, mirror completion there too
+      if (todo.linkedEventId) {
+        setEvents((prev) =>
+          prev.map((e) =>
+            e.id === todo.linkedEventId ? { ...e, completed: newCompleted } : e
+          )
+        );
+      }
+
+      // Persist to Supabase
+      try {
+        await fetch(`${API}/todos/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: newCompleted ? "done" : "pending" }),
+        });
+      } catch (err) {
+        console.error("[page] Failed to update todo status", err);
+      }
+    },
+    [todos, API]
+  );
+
+  // ── Todo title click — open drawer for linked event or synthetic event ───
+
+  const handleTodoTitleClick = useCallback(
+    (todo: TodoItem) => {
+      if (todo.linkedEventId) {
+        const linked = events.find((e) => e.id === todo.linkedEventId);
+        if (linked) {
+          setSelectedEvent(linked);
+          return;
+        }
+      }
+      // No linked event — open drawer with a synthetic event so the user can
+      // still chat about this task
+      setSelectedEvent({
+        id: -(todo.id), // negative ID signals synthetic
+        title: todo.title,
+        date: "",
+        type: "general",
+        savedContent: "",
+      });
+    },
+    [events]
+  );
+
+  // ── Progress ─────────────────────────────────────────────────────────────
+
+  const completedCount = todos.filter((t) => t.completed).length;
+  const progressPercent = todos.length > 0 ? (completedCount / todos.length) * 100 : 0;
+
+  // ── Event drawer ─────────────────────────────────────────────────────────
+
+  const handleEventClick = useCallback((event: CalendarEvent) => {
+    setSelectedEvent(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setSelectedEvent(null);
+  }, []);
+
+  // When AI content is saved to the doc panel, persist it in events state
+  const handleSaveContent = useCallback((eventId: number, content: string) => {
+    if (eventId < 0) return; // synthetic event, nothing to persist
+    setEvents((prev) =>
+      prev.map((e) => (e.id === eventId ? { ...e, savedContent: content } : e))
+    );
+    // Keep selectedEvent in sync so the drawer doesn't lose it on re-render
+    setSelectedEvent((prev) =>
+      prev && prev.id === eventId ? { ...prev, savedContent: content } : prev
+    );
+    // Persist to Supabase
+    fetch(`${API}/calendar/events/${eventId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ saved_content: content }),
+    }).catch((err) => console.error("[page] Failed to save doc content", err));
+  }, [API]);
+
+  // ── Task confirmation ────────────────────────────────────────────────────
+
+  function handleTaskConfirm(msgIndex: number) {
+    setChatMessages((prev) =>
+      prev.map((m, i) => (i === msgIndex ? { ...m, tasksConfirmed: true } : m))
+    );
+    loadFromSupabase();
+  }
+
+  function handleTaskDismiss(msgIndex: number) {
+    setChatMessages((prev) =>
+      prev.map((m, i) => (i === msgIndex ? { ...m, tasksConfirmed: true } : m))
+    );
+  }
+
+  // ── Main chat ────────────────────────────────────────────────────────────
+
+  const handleSendMessage = async (message: string) => {
+    if (!videoInfo) {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "user", content: message },
+        {
+          role: "assistant",
+          content: "Please load a YouTube song first using the panel above.",
+        },
+      ]);
+      return;
+    }
+
+    setChatMessages((prev) => [...prev, { role: "user", content: message }]);
+    setIsChatLoading(true);
 
     try {
-      const data = await sendMessage(video_id, text, sessionId, video_title, video_channel);
+      const data = await sendMessage(
+        videoInfo.video_id,
+        message,
+        sessionId,
+        videoInfo.title,
+        videoInfo.channel,
+        audioFeatures ?? undefined,  // ← librosa data passed to agent
+      );
+
       const hasTasks =
         (data.calendar_events && data.calendar_events.length > 0) ||
         (data.todo_items && data.todo_items.length > 0);
 
-      const aiMessage: MessageWithTasks = {
-        role: "assistant",
-        content: data.response,
-        tools_used: data.tools_used,
-        tasks: hasTasks
-          ? { calendar_events: data.calendar_events || [], todo_items: data.todo_items || [] }
-          : undefined,
-        tasksConfirmed: false,
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Something went wrong.";
-      setError(msg);
-      setMessages((prev) => prev.slice(0, -1));
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: data.response,
+          tasks: hasTasks
+            ? {
+                calendar_events: data.calendar_events || [],
+                todo_items: data.todo_items || [],
+              }
+            : undefined,
+          tasksConfirmed: false,
+        },
+      ]);
+    } catch (err) {
+      console.error("[page] Chat error:", err);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "Sorry, something went wrong connecting to the AI. Please try again.",
+        },
+      ]);
     } finally {
-      setLoading(false);
+      setIsChatLoading(false);
     }
-  }
+  };
 
-  function handleTaskConfirm(msgIndex: number) {
-    setMessages((prev) =>
-      prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
-    );
-    setSidebarRefresh((n) => n + 1);
-  }
-
-  function handleTaskDismiss(msgIndex: number) {
-    setMessages((prev) =>
-      prev.map((m, i) => i === msgIndex ? { ...m, tasksConfirmed: true } : m)
-    );
-  }
-
-
-  if (!video_id) return null;
+  // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-screen bg-gradient-to-br from-slate-50 via-white to-violet-50/30 font-sans">
+    <div className="min-h-screen bg-[#f7f5f2] p-6">
+      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-6 h-[calc(100vh-48px)]">
 
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-white/80 backdrop-blur-md border-b border-slate-200/60 z-10 shadow-sm shrink-0">
-        <div className="flex items-center gap-4 min-w-0">
-          <button
-            onClick={() => router.push("/")}
-            className="text-slate-400 hover:text-slate-700 transition-colors text-sm flex items-center gap-1.5 shrink-0"
-          >
-            ← Back
-          </button>
-          <div className="h-5 w-px bg-slate-200 shrink-0" />
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-md shadow-violet-200">
-              <span className="text-white text-xs">🎵</span>
+        {/* Left Sidebar */}
+        <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
+          <MiniCalendar
+            events={events}
+            onEventClick={handleEventClick}
+          />
+          <TodoListPanel
+            todos={todos}
+            onToggle={handleToggleTodo}
+            onTitleClick={handleTodoTitleClick}
+          />
+          <ProgressBar progress={progressPercent} />
+        </aside>
+
+        {/* Center Feed */}
+        <main className="overflow-y-auto pr-2 -mr-2">
+          {events.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
+              <span className="text-5xl">🎵</span>
+              <p className="text-sm">
+                Load a song and ask for a marketing plan to see your schedule here.
+              </p>
             </div>
-            <span className="text-slate-800 font-semibold text-sm hidden sm:block">Music AI</span>
-          </div>
-          <div className="h-5 w-px bg-slate-200 shrink-0" />
-          <div className="min-w-0">
-            <p className="text-slate-800 text-sm font-medium truncate">{video_title}</p>
-            <p className="text-slate-400 text-xs truncate">{video_channel}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setChatCollapsed((v) => !v)}
-            className="text-xs text-slate-500 hover:text-slate-800 border border-slate-200 hover:border-slate-300 px-3 py-1.5 rounded-lg transition-colors bg-white shadow-sm"
-          >
-            {chatCollapsed ? "💬 Show Chat" : "📅 Full Calendar"}
-          </button>
-          <button
-            onClick={() => router.push("/")}
-            className="text-xs text-slate-500 hover:text-violet-600 border border-slate-200 hover:border-violet-300 px-3 py-1.5 rounded-lg transition-colors bg-white shadow-sm"
-          >
-            + New video
-          </button>
-        </div>
-      </header>
+          ) : (
+            <DailyFeed events={events} onEventClick={handleEventClick} />
+          )}
+        </main>
 
-      {/* Body */}
-      <div className="flex flex-1 overflow-hidden">
-
-        {/* Sidebar — always visible */}
-        {!chatCollapsed && (
-          <aside className="w-72 shrink-0 bg-white/70 backdrop-blur-sm border-r border-slate-200/60 flex flex-col overflow-y-auto shadow-sm">
-            <div className="p-5 border-b border-slate-100">
-              <CalendarPanel sessionId={sessionId} refreshTrigger={sidebarRefresh} />
-            </div>
-            <div className="p-5">
-              <TodoList sessionId={sessionId} refreshTrigger={sidebarRefresh} />
-            </div>
-          </aside>
-        )}
-
-        {/* Chat — visible when not collapsed */}
-        {!chatCollapsed && (
-          <main className="flex-1 flex flex-col overflow-hidden">
-            <TranscriptPanel video_id={video_id} />
-            <div className="flex-1 overflow-y-auto px-6 py-6">
-              {messages.length === 0 ? (
-                <EmptyState onPromptSelect={handleSend} />
-              ) : (
-                <div className="max-w-2xl mx-auto flex flex-col gap-5">
-                  {messages.map((msg, i) => (
-                    <div key={i}>
-                      <ChatMessage message={msg} />
-                      {msg.role === "assistant" && msg.tasks && !msg.tasksConfirmed && (
-                        <TaskConfirmationCard
-                          sessionId={sessionId}
-                          videoId={video_id}
-                          calendarEvents={msg.tasks.calendar_events}
-                          todoItems={msg.tasks.todo_items}
-                          onConfirm={() => handleTaskConfirm(i)}
-                          onDismiss={() => handleTaskDismiss(i)}
-                        />
-                      )}
-                    </div>
-                  ))}
-                  {loading && (
-                    <div className="flex items-start gap-2">
-                      <div className="bg-white border border-slate-200 shadow-sm rounded-2xl rounded-bl-sm px-4 py-3 text-sm text-slate-400 flex items-center gap-2">
-                        <span className="inline-block w-3 h-3 border-2 border-slate-300 border-t-violet-500 rounded-full animate-spin" />
-                        Thinking…
-                      </div>
-                    </div>
-                  )}
-                  {error && (
-                    <p className="text-rose-400 text-xs text-center">⚠ {error} — try again.</p>
-                  )}
-                  <div ref={bottomRef} />
-                </div>
-              )}
-            </div>
-            <ChatInput onSend={handleSend} disabled={loading} />
-          </main>
-        )}
-
-        {/* Weekly agenda — full screen when chat collapsed */}
-        {chatCollapsed && (
-          <div className="flex-1 overflow-hidden">
-            <WeeklyAgenda
-              events={agendaEvents}
-              sessionId={sessionId}
-              videoId={video_id}
-              videoTitle={video_title}
-              videoChannel={video_channel}
-              onEventSaved={() => setSidebarRefresh((n) => n + 1)}
-            />
-          </div>
-        )}
+        {/* Right Sidebar */}
+        <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
+          <UploadPanel onVideoLoaded={handleVideoLoaded} sessionId={sessionId} />
+          <AIChatbot
+            messages={chatMessages}
+            onSendMessage={handleSendMessage}
+            isLoading={isChatLoading}
+            renderTaskCard={(msg, i) => {
+              if (!msg.tasks || msg.tasksConfirmed) return null;
+              return (
+                <TaskConfirmationCard
+                  sessionId={sessionId}
+                  videoId={videoInfo?.video_id ?? ""}
+                  calendarEvents={msg.tasks.calendar_events}
+                  todoItems={msg.tasks.todo_items}
+                  onConfirm={() => handleTaskConfirm(i)}
+                  onDismiss={() => handleTaskDismiss(i)}
+                />
+              );
+            }}
+          />
+        </aside>
       </div>
+
+      {/* Event Drawer */}
+      <EventDrawer
+        event={selectedEvent}
+        onClose={handleCloseDrawer}
+        sessionId={sessionId}
+        videoId={videoInfo?.video_id}
+        videoTitle={videoInfo?.title}
+        videoChannel={videoInfo?.channel}
+        onSaveContent={handleSaveContent}
+      />
+
+      {/* Reset session button */}
+      <button
+        onClick={async () => {
+          await fetch(`${API}/session/${sessionId}`, { method: "DELETE" });
+          setEvents([]);
+          setTodos([]);
+          setChatMessages([
+            {
+              role: "assistant",
+              content: "Session cleared. Paste a YouTube URL to start fresh.",
+            },
+          ]);
+        }}
+        className="fixed bottom-4 left-4 text-xs text-slate-300 hover:text-rose-400 transition-colors"
+        title="Clear session"
+      >
+        ↺ reset
+      </button>
     </div>
-  );
-}
-
-function EmptyState({ onPromptSelect }: { onPromptSelect: (p: string) => void }) {
-  return (
-    <div className="max-w-2xl mx-auto flex flex-col items-center gap-8 pt-8">
-      <div className="text-center flex flex-col gap-2">
-        <span className="text-4xl">🎤</span>
-        <h2 className="text-slate-800 font-semibold">Ask anything about this song</h2>
-        <p className="text-slate-400 text-sm">The AI will pick the right tools and show you which ones it used.</p>
-      </div>
-      <div className="w-full flex flex-col gap-2">
-        <p className="text-slate-400 text-xs text-center mb-1">Try one of these</p>
-        {STARTER_PROMPTS.map((prompt) => (
-          <button
-            key={prompt}
-            onClick={() => onPromptSelect(prompt)}
-            className="w-full text-left text-sm text-slate-600 hover:text-slate-900 bg-white hover:bg-violet-50 border border-slate-200 hover:border-violet-200 rounded-xl px-4 py-3 transition-all shadow-sm hover:shadow-md"
-          >
-            {prompt}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export default function ChatPage() {
-  return (
-    <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center text-slate-400 text-sm">
-        Loading…
-      </div>
-    }>
-      <ChatPageInner />
-    </Suspense>
   );
 }

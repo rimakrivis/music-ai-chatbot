@@ -19,17 +19,23 @@ interface CalendarPanelProps {
 }
 
 const TYPE_DOT: Record<string, string> = {
-  release:  "bg-violet-500",
-  deadline: "bg-rose-500",
-  promo:    "bg-sky-500",
-  general:  "bg-amber-400",
+  release:      "bg-violet-500",
+  deadline:     "bg-rose-500",
+  promo:        "bg-sky-500",
+  general:      "bg-amber-400",
+  social_media: "bg-pink-500",
+  spotify:      "bg-green-500",
+  youtube:      "bg-red-500",
 };
 
 const TYPE_PILL: Record<string, string> = {
-  release:  "bg-violet-100 text-violet-700 border-violet-200",
-  deadline: "bg-rose-100 text-rose-700 border-rose-200",
-  promo:    "bg-sky-100 text-sky-700 border-sky-200",
-  general:  "bg-amber-50 text-amber-700 border-amber-200",
+  release:      "bg-violet-100 text-violet-700 border-violet-200",
+  deadline:     "bg-rose-100 text-rose-700 border-rose-200",
+  promo:        "bg-sky-100 text-sky-700 border-sky-200",
+  general:      "bg-amber-50 text-amber-700 border-amber-200",
+  social_media: "bg-pink-50 text-pink-700 border-pink-200",
+  spotify:      "bg-green-50 text-green-700 border-green-200",
+  youtube:      "bg-red-50 text-red-700 border-red-200",
 };
 
 export default function CalendarPanel({ sessionId, refreshTrigger }: CalendarPanelProps) {

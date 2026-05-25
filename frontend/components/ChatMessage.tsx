@@ -8,19 +8,21 @@ export interface Message {
 
 // One color per tool — shown as badge pills under AI messages
 const TOOL_COLORS: Record<string, string> = {
-  search_transcript:          "bg-blue-900/60 border-blue-700/50 text-blue-300",
-  extract_lyrics:             "bg-violet-900/60 border-violet-700/50 text-violet-300",
-  analyze_marketing_potential:"bg-emerald-900/60 border-emerald-700/50 text-emerald-300",
-  get_artist_info:            "bg-orange-900/60 border-orange-700/50 text-orange-300",
-  find_release_timing:        "bg-pink-900/60 border-pink-700/50 text-pink-300",
+  search_transcript:           "bg-blue-900/60 border-blue-700/50 text-blue-300",
+  extract_lyrics:              "bg-violet-900/60 border-violet-700/50 text-violet-300",
+  analyze_marketing_potential: "bg-emerald-900/60 border-emerald-700/50 text-emerald-300",
+  get_artist_info:             "bg-orange-900/60 border-orange-700/50 text-orange-300",
+  find_release_timing:         "bg-pink-900/60 border-pink-700/50 text-pink-300",
+  search_marketing_knowledge:  "bg-teal-900/60 border-teal-700/50 text-teal-300",
 };
 
 const TOOL_LABELS: Record<string, string> = {
-  search_transcript:          "🔍 search_transcript",
-  extract_lyrics:             "🎵 extract_lyrics",
-  analyze_marketing_potential:"📊 analyze_marketing",
-  get_artist_info:            "🎤 get_artist_info",
-  find_release_timing:        "📅 find_release_timing",
+  search_transcript:           "🔍 search_transcript",
+  extract_lyrics:              "🎵 extract_lyrics",
+  analyze_marketing_potential: "📊 analyze_marketing",
+  get_artist_info:             "🎤 get_artist_info",
+  find_release_timing:         "📅 find_release_timing",
+  search_marketing_knowledge:  "📚 search_marketing_knowledge",
 };
 
 interface ChatMessageProps {

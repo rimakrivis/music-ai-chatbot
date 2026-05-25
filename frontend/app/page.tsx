@@ -13,21 +13,24 @@ import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
 import { sendMessage, AnalyzeResponse } from "@/lib/api";
 
 export default function DashboardPage() {
-  const [sessionId] = useState<string>(() => {
-    if (typeof window === "undefined") return "";
+  const [sessionId, setSessionId] = useState<string>("");
+
+  useEffect(() => {
     let stored = localStorage.getItem("music_ai_session_id");
     if (!stored) {
       stored = crypto.randomUUID();
       localStorage.setItem("music_ai_session_id", stored);
     }
-    return stored;
-  });
+    setSessionId(stored);
+  }, []);
 
   const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(() => {
     if (typeof window === "undefined") return null;
     const stored = localStorage.getItem("music_ai_last_video");
     return stored ? JSON.parse(stored) : null;
   });
+
+  const [audioFeatures, setAudioFeatures] = useState<Record<string, number> | null>(null);
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -43,8 +46,7 @@ export default function DashboardPage() {
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  // ── Load from Supabase ───────────────────────────────────────────────────
-
+  // Load from Supabase
   const loadFromSupabase = useCallback(async () => {
     try {
       const [eventsRes, todosRes] = await Promise.all([
@@ -54,29 +56,30 @@ export default function DashboardPage() {
       const eventsData = await eventsRes.json();
       const todosData = await todosRes.json();
 
-      if (eventsData.events?.length > 0) {
-        setEvents(
-          eventsData.events.map((e: any) => ({
-            id: e.id,
-            title: e.title,
-            date: e.date,
-            type: e.type,
-            completed: e.status === "done",
-            savedContent: e.saved_content ?? "",
-            linkedTodoId: e.linked_todo_id ?? undefined,
-          }))
-        );
-      }
-      if (todosData.items?.length > 0) {
-        setTodos(
-          todosData.items.map((t: any) => ({
-            id: t.id,
-            title: t.title,
-            completed: t.status === "done",
-            linkedEventId: t.linked_event_id ?? undefined,
-          }))
-        );
-      }
+    setEvents(
+        eventsData.events?.length > 0
+          ? eventsData.events.map((e: any) => ({
+              id: e.id,
+              title: e.title,
+              date: e.date,
+              type: e.type,
+              completed: e.status === "done",
+              savedContent: e.saved_content ?? "",
+              linkedTodoId: e.linked_todo_id ?? undefined,
+            }))
+          : []
+      );
+      setTodos(
+        todosData.items?.length > 0
+          ? todosData.items.map((t: any) => ({
+              id: t.id,
+              title: t.title,
+              completed: t.status === "done",
+              linkedEventId: t.linked_event_id ?? undefined,
+            }))
+          : []
+      );
+      
     } catch (e) {
       console.error("[page] Failed to load from Supabase", e);
     }
@@ -86,8 +89,25 @@ export default function DashboardPage() {
     if (sessionId) loadFromSupabase();
   }, [sessionId, loadFromSupabase]);
 
-  // ── Video loaded ─────────────────────────────────────────────────────────
+  // Load audio features from localStorage when video changes
+  useEffect(() => {
+    if (!videoInfo?.video_id) return;
+    const stored = localStorage.getItem(`audio_features_${videoInfo.video_id}`);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        setAudioFeatures(parsed);
+        console.log("🎵 Loaded audio features:", parsed);
+      } catch (e) {
+        console.error("[page] Failed to parse audio features", e);
+        setAudioFeatures(null);
+      }
+    } else {
+      setAudioFeatures(null);
+    }
+  }, [videoInfo?.video_id]);
 
+  // Video loaded
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
@@ -101,20 +121,15 @@ export default function DashboardPage() {
     setTodos([]);
   }, []);
 
-  // ── Todo toggle — also syncs linked event ────────────────────────────────
-
+  // Todo toggle
   const handleToggleTodo = useCallback(
     async (id: number) => {
       const todo = todos.find((t) => t.id === id);
       if (!todo) return;
       const newCompleted = !todo.completed;
-
-      // Optimistic update
       setTodos((prev) =>
         prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t))
       );
-
-      // If the todo has a linked event, mirror completion there too
       if (todo.linkedEventId) {
         setEvents((prev) =>
           prev.map((e) =>
@@ -122,8 +137,6 @@ export default function DashboardPage() {
           )
         );
       }
-
-      // Persist to Supabase
       try {
         await fetch(`${API}/todos/${id}`, {
           method: "PATCH",
@@ -137,8 +150,7 @@ export default function DashboardPage() {
     [todos, API]
   );
 
-  // ── Todo title click — open drawer for linked event or synthetic event ───
-
+  // Todo title click
   const handleTodoTitleClick = useCallback(
     (todo: TodoItem) => {
       if (todo.linkedEventId) {
@@ -148,10 +160,8 @@ export default function DashboardPage() {
           return;
         }
       }
-      // No linked event — open drawer with a synthetic event so the user can
-      // still chat about this task
       setSelectedEvent({
-        id: -(todo.id), // negative ID signals synthetic
+        id: -(todo.id),
         title: todo.title,
         date: "",
         type: "general",
@@ -161,12 +171,8 @@ export default function DashboardPage() {
     [events]
   );
 
-  // ── Progress ─────────────────────────────────────────────────────────────
-
   const completedCount = todos.filter((t) => t.completed).length;
   const progressPercent = todos.length > 0 ? (completedCount / todos.length) * 100 : 0;
-
-  // ── Event drawer ─────────────────────────────────────────────────────────
 
   const handleEventClick = useCallback((event: CalendarEvent) => {
     setSelectedEvent(event);
@@ -176,25 +182,23 @@ export default function DashboardPage() {
     setSelectedEvent(null);
   }, []);
 
-  // When AI content is saved to the doc panel, persist it in events state
-  const handleSaveContent = useCallback((eventId: number, content: string) => {
-    if (eventId < 0) return; // synthetic event, nothing to persist
-    setEvents((prev) =>
-      prev.map((e) => (e.id === eventId ? { ...e, savedContent: content } : e))
-    );
-    // Keep selectedEvent in sync so the drawer doesn't lose it on re-render
-    setSelectedEvent((prev) =>
-      prev && prev.id === eventId ? { ...prev, savedContent: content } : prev
-    );
-    // Optionally persist to Supabase — extend PATCH endpoint to accept saved_content
-    fetch(`${API}/calendar/events/${eventId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ saved_content: content }),
-    }).catch((err) => console.error("[page] Failed to save doc content", err));
-  }, [API]);
-
-  // ── Task confirmation ────────────────────────────────────────────────────
+  const handleSaveContent = useCallback(
+    (eventId: number, content: string) => {
+      if (eventId < 0) return;
+      setEvents((prev) =>
+        prev.map((e) => (e.id === eventId ? { ...e, savedContent: content } : e))
+      );
+      setSelectedEvent((prev) =>
+        prev && prev.id === eventId ? { ...prev, savedContent: content } : prev
+      );
+      fetch(`${API}/calendar/events/${eventId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ saved_content: content }),
+      }).catch((err) => console.error("[page] Failed to save doc content", err));
+    },
+    [API]
+  );
 
   function handleTaskConfirm(msgIndex: number) {
     setChatMessages((prev) =>
@@ -209,8 +213,7 @@ export default function DashboardPage() {
     );
   }
 
-  // ── Main chat ────────────────────────────────────────────────────────────
-
+  // Main chat
   const handleSendMessage = async (message: string) => {
     if (!videoInfo) {
       setChatMessages((prev) => [
@@ -233,7 +236,8 @@ export default function DashboardPage() {
         message,
         sessionId,
         videoInfo.title,
-        videoInfo.channel
+        videoInfo.channel,
+        audioFeatures ?? undefined,
       );
 
       const hasTasks =
@@ -268,18 +272,12 @@ export default function DashboardPage() {
     }
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────
-
   return (
     <div className="min-h-screen bg-[#f7f5f2] p-6">
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-6 h-[calc(100vh-48px)]">
 
-        {/* Left Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <MiniCalendar
-            events={events}
-            onEventClick={handleEventClick}
-          />
+          <MiniCalendar events={events} onEventClick={handleEventClick} />
           <TodoListPanel
             todos={todos}
             onToggle={handleToggleTodo}
@@ -288,7 +286,6 @@ export default function DashboardPage() {
           <ProgressBar progress={progressPercent} />
         </aside>
 
-        {/* Center Feed */}
         <main className="overflow-y-auto pr-2 -mr-2">
           {events.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
@@ -302,7 +299,6 @@ export default function DashboardPage() {
           )}
         </main>
 
-        {/* Right Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
           <UploadPanel onVideoLoaded={handleVideoLoaded} sessionId={sessionId} />
           <AIChatbot
@@ -326,7 +322,6 @@ export default function DashboardPage() {
         </aside>
       </div>
 
-      {/* Event Drawer */}
       <EventDrawer
         event={selectedEvent}
         onClose={handleCloseDrawer}
@@ -337,7 +332,6 @@ export default function DashboardPage() {
         onSaveContent={handleSaveContent}
       />
 
-      {/* Reset session button */}
       <button
         onClick={async () => {
           await fetch(`${API}/session/${sessionId}`, { method: "DELETE" });
