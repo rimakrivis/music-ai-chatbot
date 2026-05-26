@@ -11,6 +11,7 @@ import EventDrawer from "@/components/dashboard/EventDrawer";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
 import { sendMessage, AnalyzeResponse } from "@/lib/api";
+import { deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
 
 export default function DashboardPage() {
   const [sessionId, setSessionId] = useState<string>("");
@@ -215,6 +216,28 @@ export default function DashboardPage() {
     }).catch((err) => console.error("[page] Failed to save doc content", err));
   }, [API]);
 
+
+  const handleDeleteEvent = useCallback(async (eventId: number) => {
+    setEvents((prev) => prev.filter((e) => e.id !== eventId));
+    setTodos((prev) => prev.filter((t) => t.linkedEventId !== eventId));
+    try {
+      await deleteCalendarEvent(eventId);
+    } catch (err) {
+      console.error("[page] Failed to delete event", err);
+    }
+  }, []);
+
+  const handleRescheduleEvent = useCallback(async (eventId: number, newDate: string) => {
+    setEvents((prev) =>
+      prev.map((e) => (e.id === eventId ? { ...e, date: newDate } : e))
+    );
+    try {
+      await rescheduleCalendarEvent(eventId, newDate);
+    } catch (err) {
+      console.error("[page] Failed to reschedule event", err);
+    }
+  }, []);
+
   // ── Task confirmation ────────────────────────────────────────────────────
 
   function handleTaskConfirm(msgIndex: number) {
@@ -257,6 +280,28 @@ export default function DashboardPage() {
         videoInfo.channel,
         audioFeatures ?? undefined,  // ← librosa data passed to agent
       );
+
+      // Detect agent-confirmed deletion JSON block
+      try {
+        const jsonMatch = data.response.match(/\{[\s\S]*"action"\s*:\s*"delete"[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const taskTitle = parsed.task?.toLowerCase().trim() ?? "";
+          const toDelete = events.find((e) => {
+            const eventTitle = e.title.toLowerCase().trim();
+            return (
+              eventTitle.includes(taskTitle) ||
+              taskTitle.includes(eventTitle) ||
+              taskTitle.split(" ").filter((w: string) => w.length > 3).every((w: string) => eventTitle.includes(w))
+            );
+          });
+          if (toDelete) {
+            await handleDeleteEvent(toDelete.id);
+          } else {
+            console.warn("[page] Delete matched no event for task:", taskTitle);
+          }
+        }
+      } catch (_) {}
 
       const hasTasks =
         (data.calendar_events && data.calendar_events.length > 0) ||
@@ -320,7 +365,12 @@ export default function DashboardPage() {
               </p>
             </div>
           ) : (
-            <DailyFeed events={events} onEventClick={handleEventClick} />
+            <DailyFeed
+              events={events}
+              onEventClick={handleEventClick}
+              onDeleteEvent={handleDeleteEvent}
+              onRescheduleEvent={handleRescheduleEvent}
+            />
           )}
         </main>
 
@@ -357,6 +407,7 @@ export default function DashboardPage() {
         videoTitle={videoInfo?.title}
         videoChannel={videoInfo?.channel}
         onSaveContent={handleSaveContent}
+        releaseDate={events.find(e => e.type === "release")?.date ?? ""}
       />
 
       {/* Reset session button */}

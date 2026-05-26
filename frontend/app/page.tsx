@@ -10,7 +10,7 @@ import AIChatbot from "@/components/dashboard/AIChatbot";
 import EventDrawer from "@/components/dashboard/EventDrawer";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
-import { sendMessage, AnalyzeResponse } from "@/lib/api";
+import { sendMessage, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
 
 export default function DashboardPage() {
   const [sessionId, setSessionId] = useState<string>("");
@@ -31,22 +31,19 @@ export default function DashboardPage() {
   });
 
   const [audioFeatures, setAudioFeatures] = useState<Record<string, number> | null>(null);
-
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content:
-        "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
+      content: "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
     },
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  // Load from Supabase
   const loadFromSupabase = useCallback(async () => {
     try {
       const [eventsRes, todosRes] = await Promise.all([
@@ -56,7 +53,7 @@ export default function DashboardPage() {
       const eventsData = await eventsRes.json();
       const todosData = await todosRes.json();
 
-    setEvents(
+      setEvents(
         eventsData.events?.length > 0
           ? eventsData.events.map((e: any) => ({
               id: e.id,
@@ -79,7 +76,6 @@ export default function DashboardPage() {
             }))
           : []
       );
-      
     } catch (e) {
       console.error("[page] Failed to load from Supabase", e);
     }
@@ -89,7 +85,6 @@ export default function DashboardPage() {
     if (sessionId) loadFromSupabase();
   }, [sessionId, loadFromSupabase]);
 
-  // Load audio features from localStorage when video changes
   useEffect(() => {
     if (!videoInfo?.video_id) return;
     const stored = localStorage.getItem(`audio_features_${videoInfo.video_id}`);
@@ -97,9 +92,7 @@ export default function DashboardPage() {
       try {
         const parsed = JSON.parse(stored);
         setAudioFeatures(parsed);
-        console.log("🎵 Loaded audio features:", parsed);
       } catch (e) {
-        console.error("[page] Failed to parse audio features", e);
         setAudioFeatures(null);
       }
     } else {
@@ -107,7 +100,6 @@ export default function DashboardPage() {
     }
   }, [videoInfo?.video_id]);
 
-  // Video loaded
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
@@ -121,20 +113,15 @@ export default function DashboardPage() {
     setTodos([]);
   }, []);
 
-  // Todo toggle
   const handleToggleTodo = useCallback(
     async (id: number) => {
       const todo = todos.find((t) => t.id === id);
       if (!todo) return;
       const newCompleted = !todo.completed;
-      setTodos((prev) =>
-        prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t))
-      );
+      setTodos((prev) => prev.map((t) => (t.id === id ? { ...t, completed: newCompleted } : t)));
       if (todo.linkedEventId) {
         setEvents((prev) =>
-          prev.map((e) =>
-            e.id === todo.linkedEventId ? { ...e, completed: newCompleted } : e
-          )
+          prev.map((e) => (e.id === todo.linkedEventId ? { ...e, completed: newCompleted } : e))
         );
       }
       try {
@@ -150,7 +137,6 @@ export default function DashboardPage() {
     [todos, API]
   );
 
-  // Todo title click
   const handleTodoTitleClick = useCallback(
     (todo: TodoItem) => {
       if (todo.linkedEventId) {
@@ -185,12 +171,8 @@ export default function DashboardPage() {
   const handleSaveContent = useCallback(
     (eventId: number, content: string) => {
       if (eventId < 0) return;
-      setEvents((prev) =>
-        prev.map((e) => (e.id === eventId ? { ...e, savedContent: content } : e))
-      );
-      setSelectedEvent((prev) =>
-        prev && prev.id === eventId ? { ...prev, savedContent: content } : prev
-      );
+      setEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, savedContent: content } : e)));
+      setSelectedEvent((prev) => prev && prev.id === eventId ? { ...prev, savedContent: content } : prev);
       fetch(`${API}/calendar/events/${eventId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -199,6 +181,25 @@ export default function DashboardPage() {
     },
     [API]
   );
+
+  const handleDeleteEvent = useCallback(async (eventId: number) => {
+    setEvents((prev) => prev.filter((e) => e.id !== eventId));
+    setTodos((prev) => prev.filter((t) => t.linkedEventId !== eventId));
+    try {
+      await deleteCalendarEvent(eventId);
+    } catch (err) {
+      console.error("[page] Failed to delete event", err);
+    }
+  }, []);
+
+  const handleRescheduleEvent = useCallback(async (eventId: number, newDate: string) => {
+    setEvents((prev) => prev.map((e) => (e.id === eventId ? { ...e, date: newDate } : e)));
+    try {
+      await rescheduleCalendarEvent(eventId, newDate);
+    } catch (err) {
+      console.error("[page] Failed to reschedule event", err);
+    }
+  }, []);
 
   function handleTaskConfirm(msgIndex: number) {
     setChatMessages((prev) =>
@@ -213,16 +214,12 @@ export default function DashboardPage() {
     );
   }
 
-  // Main chat
   const handleSendMessage = async (message: string) => {
     if (!videoInfo) {
       setChatMessages((prev) => [
         ...prev,
         { role: "user", content: message },
-        {
-          role: "assistant",
-          content: "Please load a YouTube song first using the panel above.",
-        },
+        { role: "assistant", content: "Please load a YouTube song first using the panel above." },
       ]);
       return;
     }
@@ -239,6 +236,27 @@ export default function DashboardPage() {
         videoInfo.channel,
         audioFeatures ?? undefined,
       );
+
+      try {
+        const jsonMatch = data.response.match(/\{[\s\S]*"action"\s*:\s*"delete"[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const taskTitle = parsed.task?.toLowerCase().trim() ?? "";
+          const toDelete = events.find((e) => {
+            const eventTitle = e.title.toLowerCase().trim();
+            return (
+              eventTitle.includes(taskTitle) ||
+              taskTitle.includes(eventTitle) ||
+              taskTitle.split(" ").filter(w => w.length > 3).every(w => eventTitle.includes(w))
+            );
+          });
+          if (toDelete) {
+            await handleDeleteEvent(toDelete.id);
+          } else {
+            console.warn("[page] Delete matched no event for task:", taskTitle);
+          }
+        }
+      } catch (_) {}
 
       const hasTasks =
         (data.calendar_events && data.calendar_events.length > 0) ||
@@ -262,10 +280,7 @@ export default function DashboardPage() {
       console.error("[page] Chat error:", err);
       setChatMessages((prev) => [
         ...prev,
-        {
-          role: "assistant",
-          content: "Sorry, something went wrong connecting to the AI. Please try again.",
-        },
+        { role: "assistant", content: "Sorry, something went wrong connecting to the AI. Please try again." },
       ]);
     } finally {
       setIsChatLoading(false);
@@ -290,12 +305,15 @@ export default function DashboardPage() {
           {events.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
               <span className="text-5xl">🎵</span>
-              <p className="text-sm">
-                Load a song and ask for a marketing plan to see your schedule here.
-              </p>
+              <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
             </div>
           ) : (
-            <DailyFeed events={events} onEventClick={handleEventClick} />
+            <DailyFeed
+              events={events}
+              onEventClick={handleEventClick}
+              onDeleteEvent={handleDeleteEvent}
+              onRescheduleEvent={handleRescheduleEvent}
+            />
           )}
         </main>
 
@@ -338,10 +356,7 @@ export default function DashboardPage() {
           setEvents([]);
           setTodos([]);
           setChatMessages([
-            {
-              role: "assistant",
-              content: "Session cleared. Paste a YouTube URL to start fresh.",
-            },
+            { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh." },
           ]);
         }}
         className="fixed bottom-4 left-4 text-xs text-slate-300 hover:text-rose-400 transition-colors"

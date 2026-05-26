@@ -50,6 +50,7 @@ interface EventDrawerProps {
   videoTitle?: string;
   videoChannel?: string;
   onSaveContent?: (eventId: number, content: string) => void;
+  releaseDate?: string;
 }
 
 export default function EventDrawer({
@@ -60,6 +61,7 @@ export default function EventDrawer({
   videoTitle,
   videoChannel,
   onSaveContent,
+  releaseDate,
 }: EventDrawerProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -79,7 +81,7 @@ export default function EventDrawer({
       setMessages([
         {
           role: "assistant",
-          content: `I'm ready to help with **"${event.title}"** (${event.date}). Ask me to write a pitch, caption, press release, or anything specific to this task.`,
+          content: `${event.title} — what do you need? A post, pitch, email, or ideas?`
         },
       ]);
     } else {
@@ -104,6 +106,16 @@ export default function EventDrawer({
     setLoading(true);
 
     try {
+      const conversationHistory = messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const resolvedChannel =
+        videoChannel && videoChannel !== "Unknown Artist"
+          ? videoChannel
+          : videoTitle?.split(" - ")[0] ?? "";
+
       const res = await fetch(`${API}/event-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -112,9 +124,12 @@ export default function EventDrawer({
           event_title: event.title,
           event_type: event.type,
           event_date: event.date,
+          release_date: releaseDate ?? "",
           video_title: videoTitle ?? "",
-          video_channel: videoChannel ?? "",
+          video_channel: resolvedChannel,
+          video_id: videoId ?? "",
           doc_content: docContent,
+          messages: conversationHistory,
         }),
       });
 

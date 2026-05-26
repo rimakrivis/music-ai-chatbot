@@ -54,7 +54,7 @@ from database import (
     delete_todo,
     delete_session_data,
 )
-from config import validate_config, IS_PRODUCTION, ENVIRONMENT, OPENAI_API_KEY, XAI_API_KEY
+from config import GROK_MODEL, validate_config, IS_PRODUCTION, ENVIRONMENT, OPENAI_API_KEY, XAI_API_KEY,  GROK_MODEL, GROK_TEMPERATURE
 from pipeline import (
     fetch_transcript,
     chunk_and_embed,
@@ -197,8 +197,6 @@ async def health():
 # /analyze — YouTube URL → Pinecone
 # ---------------------------------------------------------------------------
 
-# REPLACE this entire function in main.py:
-
 @app.post("/analyze")
 async def analyze(request: AnalyzeRequest):
     print(f"\n📥 [/analyze] URL: {request.youtube_url}")
@@ -214,22 +212,18 @@ async def analyze(request: AnalyzeRequest):
         print(f"   ❌ /analyze error: {e}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-    # Run embedding + audio feature extraction concurrently
-    # Audio features are only missing if transcript came from captions (not yt-dlp)
     existing_audio_features = transcript_data.get("audio_features", {})
 
     import asyncio
     from pipeline import fetch_audio_features_background
 
     if existing_audio_features:
-        # yt-dlp path already ran librosa — no extra download needed
         embed_data = chunk_and_embed(
             video_id=transcript_data["video_id"],
             transcript_text=transcript_data["transcript_text"],
         )
         audio_features = existing_audio_features
     else:
-        # Caption path — run embedding + audio download in parallel
         audio_task = fetch_audio_features_background(transcript_data["video_id"])
 
         try:
@@ -240,7 +234,7 @@ async def analyze(request: AnalyzeRequest):
             audio_features = await audio_task
         except Exception as e:
             print(f"   ❌ /analyze step error: {e}")
-            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")   
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
     if audio_features:
         print(f"   🎵 Audio features: BPM={audio_features.get('bpm')} | "
@@ -251,8 +245,9 @@ async def analyze(request: AnalyzeRequest):
 
     return {**transcript_data, **embed_data, "audio_features": audio_features}
 
+
 # ---------------------------------------------------------------------------
-# /analyze-audio — upload file → Grok Whisper → Pinecone
+# /analyze-audio — upload file → AssemblyAI → Pinecone
 # ---------------------------------------------------------------------------
 
 @app.post("/analyze-audio")
@@ -319,7 +314,7 @@ async def analyze_audio(
             print(f"   ⚠️ librosa failed (non-fatal): {e}")
             audio_features = {}
 
-        # 6 — AssemblyAI transcription via direct REST API (bypasses SDK version issues)
+        # 6 — AssemblyAI transcription via direct REST API
         import asyncio
         import httpx as _httpx
 
@@ -382,7 +377,6 @@ async def analyze_audio(
         raise HTTPException(status_code=422, detail=f"Transcription failed: {str(e)}")
 
     finally:
-        # Always clean up — runs AFTER transcribe() returns (it's synchronous/blocking)
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -416,6 +410,8 @@ async def analyze_audio(
         "namespace": embed_data.get("namespace", f"video_{generated_video_id}"),
         "status": "success",
     }
+
+
 # ---------------------------------------------------------------------------
 # Task extraction helper — parses calendar events + todos from agent response
 # ---------------------------------------------------------------------------
@@ -433,11 +429,11 @@ async def extract_tasks_from_response(response_text: str) -> dict:
     """
     print("   🗂️ [extract_tasks] Extracting tasks from response...")
 
-    today = date.today().isoformat()  # e.g. "2026-05-23"
+    today = date.today().isoformat()
 
     system_prompt = f"""You are a task extraction assistant. Today's date is {today}.
 
-Extract structured tasks from the music marketing plan below.
+The input is a music release plan checklist. Every line that starts with "[ ]" is a task. Extract ALL of them without exception.
 
 Return ONLY valid JSON — no markdown, no backticks, no explanation:
 {{
@@ -450,11 +446,13 @@ Return ONLY valid JSON — no markdown, no backticks, no explanation:
 }}
 
 Rules:
-- Only extract events that have a clear date or relative time hint (e.g. "2 weeks before release")
-- Resolve relative dates using today = {today}
-- If no date is mentioned, set due_date to null for todos and skip for calendar events
-- type must be one of: release, deadline, promo, spotify, youtube, social_media, general
-- If no tasks found, return {{"calendar_events": [], "todo_items": []}}"""
+- Extract EVERY line that starts with [ ] — do not skip any
+- Each [ ] line becomes both a calendar_event AND a todo_item
+- The date is the YYYY-MM-DD value on that line
+- The type is the last word on that line — map it exactly: deadline, release, spotify, youtube, social_media, general, promo
+- todo_item title = same as calendar_event title
+- todo_item due_date = same date as calendar_event
+- If no [ ] lines found, return {{"calendar_events": [], "todo_items": []}}"""
 
     try:
         client = AsyncOpenAI()
@@ -462,16 +460,23 @@ Rules:
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": response_text},
+                {"role": "user", "content": response_text[:3000]},
             ],
             temperature=0,
-            max_tokens=1000,
+            max_tokens=2000,
         )
         raw = completion.choices[0].message.content.strip()
         print(f"   🗂️ [extract_tasks] Raw response: {raw[:120]}...")
 
-        # Strip markdown fences if model ignores instructions
         clean = raw.replace("```json", "").replace("```", "").strip()
+
+        start = clean.find("{")
+        end = clean.rfind("}") + 1
+        if start == -1 or end == 0:
+            print("   ⚠️ [extract_tasks] No JSON object found")
+            return {"calendar_events": [], "todo_items": []}
+
+        clean = clean[start:end]
         parsed = json.loads(clean)
 
         calendar_events = parsed.get("calendar_events", [])
@@ -487,9 +492,13 @@ Rules:
         print(f"   ⚠️ [extract_tasks] Extraction failed: {e} — returning empty tasks")
         return {"calendar_events": [], "todo_items": []}
 
+
+# ---------------------------------------------------------------------------
+# /chat
+# ---------------------------------------------------------------------------
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    
     """
     Sends a user message to the LangChain ReAct agent and returns the response.
     Memory is scoped to session_id.
@@ -519,7 +528,7 @@ async def chat(request: ChatRequest):
             video_id=request.video_id,
             video_title=request.video_title,
             video_channel=request.video_channel,
-            audio_features=request.audio_features,  # dict or None
+            audio_features=request.audio_features,
         )
 
         tasks = await extract_tasks_from_response(result["response"])
@@ -555,6 +564,7 @@ async def event_chat(request: dict):
     event_title = request.get("event_title", "")
     event_type = request.get("event_type", "general")
     event_date = request.get("event_date", "")
+    release_date = request.get("release_date", "")
     video_title = request.get("video_title", "")
     video_channel = request.get("video_channel", "")
     video_id = request.get("video_id", "")
@@ -590,6 +600,8 @@ async def event_chat(request: dict):
                 chunks.append(f"[{header}]\n{doc.page_content}")
             knowledge_context = "\n\n---\n\n".join(chunks)
             print(f"   📚 Retrieved {len(results)} knowledge chunks")
+            for doc in results:
+                print(f"      → [{doc.metadata.get('section', '?')}] {doc.page_content[:80]}...")
         else:
             print("   📚 No knowledge chunks found — using training data")
     except Exception as e:
@@ -626,7 +638,7 @@ async def event_chat(request: dict):
 
     system_prompt = f"""You are a music industry professional. Write submission-ready content only.
 
-Task: "{event_title}" | Type: {event_type} | Date: {event_date}
+Task: "{event_title}" | Type: {event_type} | Date: {event_date}{f" | Release Date: {release_date}" if release_date else ""}
 Song: "{video_title}" by "{artist}"
 Tone: {tone}
 
@@ -638,21 +650,28 @@ Rules:
 - Follow GUIDELINES strictly if provided
 - Use LYRICS for specific song references
 - No placeholders ever — write real content
-- Spotify pitch: max 500 chars
+- Spotify pitch: max 500 chars, MUST start with: {artist} — {video_title} (if both known)
+- Always use the real artist name and song title — never omit them
 - Output only the final content, no explanation"""
 
     try:
-        client = AsyncOpenAI()
+        from openai import AsyncOpenAI as _AsyncOpenAI
+        client = _AsyncOpenAI(
+            api_key=XAI_API_KEY,
+            base_url="https://api.x.ai/v1",
+        )
+        history = request.get("messages", [])
+        conversation = [{"role": "system", "content": system_prompt}] + history if history else [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": message},
+        ]
         response = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message},
-            ],
-            temperature=0.7,
+            model=GROK_MODEL,
+            messages=conversation,
+            temperature=GROK_TEMPERATURE,
         )
         reply = response.choices[0].message.content.strip()
-        print(f"   ✅ Event chat response ({len(reply)} chars)")
+        print(f"   ✅ Event chat response ({len(reply)} chars) | Model: {GROK_MODEL}")
         return {"response": reply}
 
     except Exception as e:

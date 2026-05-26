@@ -51,7 +51,7 @@ export default function AIChatbot({ messages, onSendMessage, isLoading = false, 
             <span className="text-white text-xs">X</span>
           </div>
           <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-600 max-w-[90%]">
-            Ask me about your music release...
+            What's your release date? I'll build your full rollout plan.
           </div>
         </div>
 
@@ -63,13 +63,16 @@ export default function AIChatbot({ messages, onSendMessage, isLoading = false, 
                   <span className="text-white text-xs">X</span>
                 </div>
               )}
-              <div className={`rounded-xl px-3 py-2 text-sm max-w-[85%]
-                ${msg.role === "user"
-                  ? "bg-slate-800 text-white"
-                  : "bg-slate-50 border border-slate-200 text-slate-700"
-                }`}>
-                {msg.content}
-              </div>
+            {msg.role === "user" && (
+                <div className="rounded-xl px-3 py-2 text-sm max-w-[85%] bg-slate-800 text-white">
+                  {msg.content}
+                </div>
+              )}
+              {msg.role === "assistant" && !msg.tasks && (
+                <div className="rounded-xl px-3 py-2 text-sm max-w-[85%] bg-slate-50 border border-slate-200 text-slate-700">
+                  {msg.content}
+                </div>
+              )}
             </div>
             {/* Task confirmation card renders here, below the assistant message */}
             {msg.role === "assistant" && renderTaskCard?.(msg, i)}

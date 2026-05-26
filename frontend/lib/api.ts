@@ -168,3 +168,18 @@ export async function analyzeAudioFile(
   console.log("[api] analyzeAudioFile ✓", { video_id: data.video_id, chunks: data.chunks_created });
   return data;
 }
+export async function deleteCalendarEvent(eventId: number): Promise<void> {
+  const res = await fetch(`${API_URL}/calendar/events/${eventId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+}
+
+export async function rescheduleCalendarEvent(eventId: number, newDate: string): Promise<void> {
+  const res = await fetch(`${API_URL}/calendar/events/${eventId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date: newDate }),
+  });
+  if (!res.ok) throw new Error(`Reschedule failed: ${res.status}`);
+}
