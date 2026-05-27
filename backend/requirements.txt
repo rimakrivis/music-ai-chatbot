@@ -76,7 +76,7 @@ mdurl==0.1.2
 mmh3==5.2.1
 multidict==6.7.1
 mypy_extensions==1.1.0
-numpy==2.4.4
+numpy==1.26.4
 oauthlib==3.3.1
 onnxruntime==1.26.0
 openai==2.36.0
@@ -159,4 +159,5 @@ yt-dlp==2026.3.17
 zipp==3.23.1
 zstandard==0.25.0
 python-multipart
-librosa>=0.10.0
+essentia-tensorflow==2.1b6.dev1110
+

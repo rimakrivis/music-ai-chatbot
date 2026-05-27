@@ -5,7 +5,7 @@
 # fetch_transcript()      → gets text from a YouTube video
 # chunk_and_embed()       → splits text into chunks and stores
 #                           them as vectors in Pinecone
-# extract_audio_features() → extracts BPM, energy, key via librosa
+# detect_genres()          → detects genre + subgenres via Essentia Discogs-EffNet
 #                           called during yt-dlp download (audio already on disk)
 #
 # Transcript strategy (in order):
@@ -112,132 +112,6 @@ def extract_video_id(youtube_url: str) -> str:
         f"Make sure it is a valid YouTube URL."
     )
 
-
-# -------------------------------------------------------
-# NEW — extract_audio_features(audio_path)
-#
-# Runs librosa on a local audio file and returns a dict with:
-#   bpm        — beats per minute (tempo)
-#   energy     — RMS energy 0.0–1.0 (how loud/intense the track is)
-#   key        — musical key (e.g. "C", "F#")
-#   mode       — "major" or "minor"
-#   duration   — track length in seconds
-#
-# Called inside fetch_transcript() when yt-dlp downloads audio,
-# and from main.py when a user uploads an audio file.
-#
-# Returns an empty dict (not an error) if librosa is unavailable —
-# the rest of the pipeline continues normally without audio features.
-# -------------------------------------------------------
-def extract_audio_features(audio_path: str) -> dict:
-    print(f"[pipeline] 🎵 Extracting audio features from: {audio_path}")
-    try:
-        import librosa
-        import numpy as np
-
-        # Load audio — librosa resamples to mono 22050 Hz automatically
-        # duration=120 caps at 2 minutes — enough for genre/energy detection
-        # and avoids slow processing on long files
-        y, sr = librosa.load(audio_path, duration=120, mono=True)
-        print(f"[pipeline] Audio loaded: {len(y)/sr:.1f}s at {sr}Hz")
-
-        # --- BPM (tempo) ---
-        # librosa.beat.beat_track returns (tempo, beat_frames)
-        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-        bpm = round(float(tempo[0]) if hasattr(tempo, '__len__') else float(tempo), 1)
-        print(f"[pipeline] BPM: {bpm}")
-
-        # --- Energy (RMS) ---
-        # RMS = root mean square of the audio signal
-        # Gives a 0.0–1.0 proxy for loudness/intensity
-        rms = librosa.feature.rms(y=y)
-        energy_raw = float(np.mean(rms))
-        # Normalize: typical RMS values are 0.0–0.3, we scale to 0–1
-        energy = round(min(energy_raw * 4, 1.0), 3)
-        print(f"[pipeline] Energy: {energy} (raw RMS: {energy_raw:.4f})")
-
-        # --- Key and Mode ---
-        # Chromagram captures the 12 pitch classes across time
-        # We sum across time to find the dominant pitch class
-        chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-        chroma_mean = np.mean(chroma, axis=1)
-        key_index = int(np.argmax(chroma_mean))
-
-        key_names = ["C", "C#", "D", "D#", "E", "F",
-                     "F#", "G", "G#", "A", "A#", "B"]
-        key = key_names[key_index]
-
-        # Mode: compare major vs minor template correlation
-        # Major template: strong on root, 3rd, 5th
-        major_profile = np.array([1,0,1,0,1,1,0,1,0,1,0,1], dtype=float)
-        minor_profile = np.array([1,0,1,1,0,1,0,1,1,0,1,0], dtype=float)
-
-        major_profile = np.roll(major_profile, key_index)
-        minor_profile = np.roll(minor_profile, key_index)
-
-        major_score = float(np.dot(chroma_mean, major_profile))
-        minor_score = float(np.dot(chroma_mean, minor_profile))
-        mode = "major" if major_score > minor_score else "minor"
-
-        print(f"[pipeline] Key: {key} {mode}")
-
-        # --- Duration ---
-        duration = round(float(librosa.get_duration(y=y, sr=sr)), 1)
-
-        features = {
-            "bpm": bpm,
-            "energy": energy,
-            "key": key,
-            "mode": mode,
-            "duration_seconds": duration,
-        }
-        print(f"[pipeline] ✅ Audio features extracted: {features}")
-        return features
-
-    except ImportError:
-        print(f"[pipeline] ⚠️ librosa not installed — skipping audio features")
-        print(f"[pipeline] Run: pip install librosa --break-system-packages")
-        return {}
-    except Exception as e:
-        # Never crash the pipeline over audio features — they are enrichment only
-        print(f"[pipeline] ⚠️ Audio feature extraction failed (non-fatal): {e}")
-        return {}
-
-# -------------------------------------------------------
-# NEW — fetch_audio_features_background(video_id)
-#
-# Downloads audio ONLY for librosa feature extraction.
-# Called after transcript is already fetched via captions.
-# Returns {} silently on any failure.
-# -------------------------------------------------------
-async def fetch_audio_features_background(video_id: str) -> dict:
-    import asyncio
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _fetch_audio_features_sync, video_id)
-
-
-def _fetch_audio_features_sync(video_id: str) -> dict:
-    print(f"[pipeline] 🎵 Background audio feature extraction for: {video_id}")
-    try:
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            audio_path = os.path.join(tmp_dir, "audio.mp3")
-            ydl_opts = {
-                "format": "bestaudio/best",
-                "outtmpl": os.path.join(tmp_dir, "audio"),
-                "quiet": True,
-                "no_warnings": True,
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "128",
-                }],
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
-            return extract_audio_features(audio_path)
-    except Exception as e:
-        print(f"[pipeline] ⚠️ Background audio feature extraction failed (non-fatal): {e}")
-        return {}
 
 # -------------------------------------------------------
 # HELPER — fetch video metadata
@@ -371,8 +245,8 @@ def fetch_transcript_youtube_api(video_id: str) -> str | None:
 # FUNCTION 1 — fetch_transcript(youtube_url)
 #
 # Tries 4 methods in order. When yt-dlp downloads audio for
-# AssemblyAI (Attempt 4), librosa also runs on the same file
-# to extract audio features — no extra download cost.
+# AssemblyAI (Attempt 4), Essentia also runs on the same file
+# to extract genre features — no extra download cost.
 # -------------------------------------------------------
 def fetch_transcript(youtube_url: str) -> dict:
     print(f"\n[pipeline] ── Starting fetch_transcript ──")
@@ -448,7 +322,7 @@ def fetch_transcript(youtube_url: str) -> dict:
             print(f"[pipeline] youtube-transcript-api failed: {type(e).__name__}: {e}")
 
     # --- Attempt 4: yt-dlp + AssemblyAI ---
-    # Audio is already downloaded here — run librosa on it for free
+    # Audio is already downloaded here — run Essentia genre detection on it for free
     if not transcript_text:
         try:
             print(f"[pipeline] Downloading audio with yt-dlp...")
@@ -468,11 +342,15 @@ def fetch_transcript(youtube_url: str) -> dict:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
 
-                # ── Extract audio features while file is on disk ──
-                # This is free — audio is already downloaded for AssemblyAI.
-                # librosa runs on the same file, no extra network call.
-                print(f"[pipeline] Running librosa on downloaded audio...")
-                audio_features = extract_audio_features(audio_path)
+                # ── Extract genre features while file is on disk ──
+                # Essentia runs on the same file already downloaded for AssemblyAI.
+                print(f"[pipeline] Running Essentia genre detection on downloaded audio...")
+                try:
+                    from tools.genre_detect import detect_genres
+                    audio_features = detect_genres(audio_path)
+                except Exception as genre_err:
+                    print(f"[pipeline] ⚠️ Genre detection failed (non-fatal): {genre_err}")
+                    audio_features = {}
 
                 print(f"[pipeline] Audio downloaded. Sending to AssemblyAI...")
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
@@ -509,9 +387,11 @@ def fetch_transcript(youtube_url: str) -> dict:
     }
 
     if audio_features:
-        print(f"[pipeline] 🎵 Audio features included: BPM={audio_features.get('bpm')} | "
-              f"Energy={audio_features.get('energy')} | "
-              f"Key={audio_features.get('key')} {audio_features.get('mode')}")
+        top = audio_features.get('top_genres', [])
+        if top:
+            g = top[0]
+            print(f"[pipeline] 🎵 Genre detected: {g.get('genre')} › {g.get('subgenre')} "
+                  f"({round(g.get('confidence', 0) * 100, 1)}%)")
     else:
         print(f"[pipeline] ℹ️  No audio features (transcript came from captions — no download needed)")
 

@@ -16,7 +16,7 @@ from tools.search_marketing_knowledge import search_marketing_knowledge
 from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
 
 # ---------------------------------------------------------------------------
-# Model — Grok via xAI (OpenAI-compatible endpoint)
+# Model
 # ---------------------------------------------------------------------------
 llm = ChatOpenAI(
     model=GROK_MODEL,
@@ -27,9 +27,6 @@ llm = ChatOpenAI(
 )
 print(f"[agent] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT} | endpoint: xAI")
 
-# ---------------------------------------------------------------------------
-# Tools — 6 tools, no extract_audio_features (that's a pipeline function, not agent tool)
-# ---------------------------------------------------------------------------
 TOOLS = [
     search_transcript,
     extract_lyrics,
@@ -39,46 +36,30 @@ TOOLS = [
     search_marketing_knowledge,
 ]
 
-# ---------------------------------------------------------------------------
-# Memory
-# ---------------------------------------------------------------------------
 checkpointer = InMemorySaver()
 
 def _trim_messages(messages: list, keep_last_n_human_turns: int = 6) -> list:
-    """
-    Keep the system message (always first) + last N human/assistant pairs.
-    Drop intermediate ToolMessages and tool-call AIMessages older than that window.
-    This caps token growth without losing conversational context.
-    """
     if not messages:
         return messages
-
     system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
     non_system = [m for m in messages if not isinstance(m, SystemMessage)]
-
-    # Find human message indices
     human_indices = [i for i, m in enumerate(non_system) if isinstance(m, HumanMessage)]
-
     if len(human_indices) <= keep_last_n_human_turns:
-        return messages  # Within budget, keep everything
-
-    # Only keep messages from the Nth-last human turn onward
+        return messages
     cutoff = human_indices[-keep_last_n_human_turns]
     trimmed = non_system[cutoff:]
-
     print(f"   ✂️  Trimmed history: {len(non_system)} → {len(trimmed)} messages")
     return system_msgs + trimmed
 
 
 # ---------------------------------------------------------------------------
-# System prompt builder
+# System prompt builder — now accepts genre_data dict instead of audio_features
 # ---------------------------------------------------------------------------
 def _build_system_prompt(
     video_id: str,
     video_title: str = "",
     video_channel: str = "",
-    audio_features_text: str = "",
-    audio_features_json: str = "",
+    genre_data: dict = None,       # ← replaces audio_features_text / audio_features_json
 ) -> str:
     video_context = f"video ID: {video_id}"
     if video_title:
@@ -89,13 +70,36 @@ def _build_system_prompt(
 
     today = _date.today().isoformat()
 
-    if audio_features_text and audio_features_json:
-        audio_block = (
-            f"{audio_features_text}\n"
-            f"RAW JSON for tool call: {audio_features_json}"
+    # ── Build genre block from Essentia output ──
+    if genre_data and genre_data.get("top_genres"):
+        top_genres = genre_data["top_genres"]
+
+        # Primary genre line: "Electronic › House (87.3%)"
+        primary = top_genres[0]
+        primary_line = f"{primary['genre']}"
+        if primary["subgenre"]:
+            primary_line += f" › {primary['subgenre']}"
+        primary_line += f" ({round(primary['confidence'] * 100, 1)}%)"
+
+        # Secondary genres as a compact comma-separated list
+        secondary_parts = []
+        for g in top_genres[1:]:
+            label = g["genre"]
+            if g["subgenre"]:
+                label += f" › {g['subgenre']}"
+            label += f" ({round(g['confidence'] * 100, 1)}%)"
+            secondary_parts.append(label)
+
+        secondary_line = ", ".join(secondary_parts) if secondary_parts else "—"
+
+        genre_block = (
+            f"Primary genre:    {primary_line}\n"
+            f"Also detected:    {secondary_line}\n"
+            f"Source:           Essentia Discogs-EffNet (400-class model)\n"
+            f"RAW JSON: {json.dumps({'top_genres': top_genres})}"
         )
     else:
-        audio_block = "No raw audio data available for this track."
+        genre_block = "No genre data available for this track."
 
     return f"""You are DropOperator — a music release planner.
 
@@ -103,8 +107,8 @@ CURRENT TRACK:
 {video_context}
 Always pass video_id={video_id} to any tool that requires it.
 
-AUDIO FACTS (pre-extracted by librosa — do not re-analyze):
-{audio_block}
+GENRE & SOUND PROFILE (pre-detected by Essentia — do not re-analyze):
+{genre_block}
 
 TODAY: {today}
 DATE RULES: PRE-RELEASE tasks before release date | Spotify pitch min 7 days before (28 days recommended) — NEVER after release | Distributor upload type = deadline (min 4 days before) | POST-RELEASE tasks intentionally after release date | Release date appears once in checklist header only | If user says already submitted to distributor → skip "Upload to Distributor" and "Master Audio File Ready".
@@ -181,7 +185,7 @@ CRITICAL DATE RULES:
 TOOLS:
 - search_marketing_knowledge → MUST be called first for every plan and every how-to question. Never answer from memory. If the tool returns nothing, only then use general knowledge and flag it as: "I couldn't find this in the knowledge base, but generally..."
 - search_transcript → song themes, mood, lyrics content
-- analyze_marketing_potential → needs search_transcript result first
+- analyze_marketing_potential → needs search_transcript result first. Also pass genre_data as a JSON string — take the RAW JSON from the GENRE & SOUND PROFILE block above and pass it directly as the genre_data parameter.
 - find_release_timing → use for release date strategy if user is unsure
 - get_artist_info → Spotify stats if artist name known
 - extract_lyrics → only if user explicitly asks for lyrics
@@ -191,7 +195,7 @@ Always respond in the same language the user writes in.
 
 
 # ---------------------------------------------------------------------------
-# Agent factory
+# Agent factory — unchanged
 # ---------------------------------------------------------------------------
 
 STATIC_SYSTEM_PROMPT = """You are DropOperator — a music release planner.
@@ -200,20 +204,18 @@ Always respond in the same language the user writes in."""
 
 def create_music_agent():
     print("\n🤖 [agent] Creating music agent...")
-
     agent = create_react_agent(
         model=llm,
         tools=TOOLS,
         checkpointer=checkpointer,
-        prompt=STATIC_SYSTEM_PROMPT,  # type: ignore
+        prompt=STATIC_SYSTEM_PROMPT,
     )
-
     print("   ✅ Music agent created with 6 tools and InMemorySaver memory")
     return agent
 
 
 # ---------------------------------------------------------------------------
-# Agent runner
+# Agent runner — audio_features param renamed to genre_data
 # ---------------------------------------------------------------------------
 async def run_agent(
     agent,
@@ -222,51 +224,36 @@ async def run_agent(
     video_id: str,
     video_title: str = "",
     video_channel: str = "",
-    audio_features: dict = None,
+    genre_data: dict = None,       # ← renamed from audio_features
 ) -> dict:
     print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id}")
     print(f"   Message: '{message}'")
 
-    # Build audio features strings for system prompt
-    audio_features_text = ""
-    audio_features_json = ""
-
-    if audio_features and isinstance(audio_features, dict) and audio_features.get("bpm"):
-        audio_features_json = json.dumps(audio_features)
-        bpm = audio_features.get("bpm", "?")
-        energy = audio_features.get("energy", "?")
-        key = audio_features.get("key", "?")
-        mode = audio_features.get("mode", "?")
-        duration = audio_features.get("duration_seconds", "?")
-        audio_features_text = (
-            f"BPM: {bpm} | Energy: {energy} | Key: {key} {mode} | Duration: {duration}s"
+    if genre_data and genre_data.get("top_genres"):
+        top = genre_data["top_genres"][0]
+        print(
+            f"   🎵 Genre data loaded: {top.get('genre')} › {top.get('subgenre')} "
+            f"({round(top.get('confidence', 0) * 100, 1)}%)"
         )
-        print(f"   🎵 Audio features loaded: BPM={bpm}, Energy={energy}, Key={key} {mode}")
     else:
-        print("   ℹ️ No audio features available for this track")
+        print("   ℹ️ No genre data available for this track")
 
     context_block = _build_system_prompt(
         video_id,
         video_title,
         video_channel,
-        audio_features_text,
-        audio_features_json,
+        genre_data,
     )
 
-    config = {
-        "configurable": {
-            "thread_id": session_id
-        }
-    }
+    config = {"configurable": {"thread_id": session_id}}
 
-    # Check if this thread already has history — if so, skip re-injecting context
     existing = checkpointer.get(config)
     is_first_turn = (
         existing is None
         or not existing.get("channel_values", {}).get("messages")
     )
 
-    if is_first_turn:
+    if is_first_turn or (genre_data and genre_data.get("top_genres")):
         agent_input = {
             "messages": [
                 {"role": "system", "content": context_block},
@@ -274,17 +261,19 @@ async def run_agent(
                 {"role": "user", "content": message},
             ]
         }
-        print("   📌 First turn — injecting system context")
+        if is_first_turn:
+            print("   📌 First turn — injecting system context")
+        else:
+            print("   🔄 Genre data available — re-injecting system context")
     else:
         agent_input = {
             "messages": [
                 {"role": "user", "content": message},
             ]
         }
-        print("   ♻️  Returning turn — skipping context re-injection")
+        print("   ♻️ Returning turn — skipping context re-injection")
 
     try:
-        # Apply history trimming to cap token growth on long sessions
         existing_state = checkpointer.get(config)
         if existing_state:
             existing_msgs = existing_state.get("channel_values", {}).get("messages", [])
@@ -294,7 +283,6 @@ async def run_agent(
                     existing_state["channel_values"]["messages"] = trimmed
 
         result = await agent.ainvoke(agent_input, config=config)
-
         all_messages = result.get("messages", [])
 
         response_text = ""

@@ -10,7 +10,7 @@ export interface AnalyzeResponse {
   source: string;
   chunks_created: number;
   namespace: string;
-  audio_features?: Record<string, number>;  // present when uploaded via /analyze-audio
+  audio_features?: Record<string, unknown>;
   status: string;
 }
 
@@ -66,7 +66,7 @@ export async function sendMessage(
   session_id: string,
   video_title: string,
   video_channel: string = "",
-  audio_features?: Record<string, number>
+  audio_features?: Record<string, unknown>
 ): Promise<ChatResponse> {
   console.log("[api] sendMessage →", { video_id, message, session_id });
   if (audio_features) {

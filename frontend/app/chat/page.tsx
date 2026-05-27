@@ -30,7 +30,7 @@ export default function DashboardPage() {
     return stored ? JSON.parse(stored) : null;
   });
 
-  const [audioFeatures, setAudioFeatures] = useState<Record<string, number> | null>(null);
+  const [audioFeatures, setAudioFeatures] = useState<Record<string, unknown> | null>(null);
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
@@ -94,6 +94,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!videoInfo?.video_id) return;
     const stored = localStorage.getItem(`audio_features_${videoInfo.video_id}`);
+    console.log(`[page] audio_features in localStorage for ${videoInfo.video_id}:`, stored ? "EXISTS" : "MISSING");
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
@@ -113,6 +114,9 @@ export default function DashboardPage() {
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
+    if (video.audio_features && Object.keys(video.audio_features).length > 0) {
+      setAudioFeatures(video.audio_features as Record<string, unknown>);
+    }
     setChatMessages([
       {
         role: "assistant",
@@ -278,7 +282,7 @@ export default function DashboardPage() {
         sessionId,
         videoInfo.title,
         videoInfo.channel,
-        audioFeatures ?? undefined,  // ← librosa data passed to agent
+        audioFeatures as Record<string, number> ?? undefined,  // ← genre data passed to agent
       );
 
       // Detect agent-confirmed deletion JSON block
@@ -408,6 +412,7 @@ export default function DashboardPage() {
         videoChannel={videoInfo?.channel}
         onSaveContent={handleSaveContent}
         releaseDate={events.find(e => e.type === "release")?.date ?? ""}
+        audioFeatures={audioFeatures}
       />
 
       {/* Reset session button */}

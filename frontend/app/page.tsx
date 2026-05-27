@@ -30,7 +30,7 @@ export default function DashboardPage() {
     return stored ? JSON.parse(stored) : null;
   });
 
-  const [audioFeatures, setAudioFeatures] = useState<Record<string, number> | null>(null);
+  const [audioFeatures, setAudioFeatures] = useState<Record<string, unknown> | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -87,6 +87,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!videoInfo?.video_id) return;
+    if (videoInfo.audio_features && Object.keys(videoInfo.audio_features).length > 0) {
+      setAudioFeatures(videoInfo.audio_features as Record<string, unknown>);
+      return;
+    }
     const stored = localStorage.getItem(`audio_features_${videoInfo.video_id}`);
     if (stored) {
       try {
@@ -103,6 +107,10 @@ export default function DashboardPage() {
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
+    if (video.audio_features && Object.keys(video.audio_features).length > 0) {
+      setAudioFeatures(video.audio_features as Record<string, unknown>);
+      localStorage.setItem(`audio_features_${video.video_id}`, JSON.stringify(video.audio_features));
+    }
     setChatMessages([
       {
         role: "assistant",
@@ -348,6 +356,8 @@ export default function DashboardPage() {
         videoTitle={videoInfo?.title}
         videoChannel={videoInfo?.channel}
         onSaveContent={handleSaveContent}
+        releaseDate={events.find(e => e.type === "release")?.date ?? ""}
+        audioFeatures={audioFeatures}
       />
 
       <button

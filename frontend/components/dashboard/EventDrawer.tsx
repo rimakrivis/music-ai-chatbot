@@ -51,6 +51,7 @@ interface EventDrawerProps {
   videoChannel?: string;
   onSaveContent?: (eventId: number, content: string) => void;
   releaseDate?: string;
+  audioFeatures?: Record<string, unknown> | null;
 }
 
 export default function EventDrawer({
@@ -62,6 +63,7 @@ export default function EventDrawer({
   videoChannel,
   onSaveContent,
   releaseDate,
+  audioFeatures,
 }: EventDrawerProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -130,6 +132,7 @@ export default function EventDrawer({
           video_id: videoId ?? "",
           doc_content: docContent,
           messages: conversationHistory,
+          audio_features: audioFeatures ?? null,
         }),
       });
 

@@ -34,6 +34,7 @@ import os
 import hashlib
 import json
 import tempfile
+from urllib import request
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,6 +42,8 @@ from pydantic import BaseModel
 from datetime import date
 
 from openai import AsyncOpenAI
+import asyncio
+import httpx as _httpx
 
 from database import (
     create_tables,
@@ -58,9 +61,9 @@ from config import GROK_MODEL, validate_config, IS_PRODUCTION, ENVIRONMENT, OPEN
 from pipeline import (
     fetch_transcript,
     chunk_and_embed,
-    get_transcript_from_chroma,   # alias for get_transcript_from_pinecone
-    extract_audio_features,
+    get_transcript_from_chroma,
 )
+from tools.genre_detect import detect_genres 
 from agent import create_music_agent, run_agent
 
 
@@ -306,17 +309,18 @@ async def analyze_audio(
     audio_features = {}
 
     try:
-        # 5 — librosa audio features (non-fatal)
+         # 5 — Essentia genre detection (non-fatal)
         try:
-            audio_features = extract_audio_features(tmp_path)
-            print(f"   🎵 Audio features: {audio_features}")
+            audio_features = detect_genres(tmp_path)
+            if audio_features.get("top_genres"):
+                top = audio_features["top_genres"][0]
+                print(f"   🎵 Genre: {top['genre']} › {top['subgenre']} ({round(top['confidence']*100,1)}%)")
         except Exception as e:
-            print(f"   ⚠️ librosa failed (non-fatal): {e}")
+            print(f"   ⚠️ Genre detection failed (non-fatal): {e}")
             audio_features = {}
 
         # 6 — AssemblyAI transcription via direct REST API
-        import asyncio
-        import httpx as _httpx
+        
 
         _aai_key = os.getenv("ASSEMBLYAI_API_KEY")
         _headers = {"authorization": _aai_key}
@@ -528,7 +532,7 @@ async def chat(request: ChatRequest):
             video_id=request.video_id,
             video_title=request.video_title,
             video_channel=request.video_channel,
-            audio_features=request.audio_features,
+            genre_data=request.audio_features,
         )
 
         tasks = await extract_tasks_from_response(result["response"])
@@ -569,6 +573,8 @@ async def event_chat(request: dict):
     video_channel = request.get("video_channel", "")
     video_id = request.get("video_id", "")
     doc_content = request.get("doc_content", "")
+    audio_features = request.get("audio_features", None)
+    print(f"   🎵 [event-chat] audio_features received: {bool(audio_features)} | top_genres: {bool(audio_features and audio_features.get('top_genres'))}")
 
     print(f"\n📥 [/event-chat] Task: '{event_title}' | Message: '{message[:60]}'")
 
@@ -630,6 +636,12 @@ async def event_chat(request: dict):
     }
     tone = tone_guide.get(event_type, "professional but approachable")
 
+    # Build genre block
+    genre_block = ""
+    if audio_features and audio_features.get("top_genres"):
+        top = audio_features["top_genres"][0]
+        genre_block = f"\nGENRE: {top.get('genre')} › {top.get('subgenre')} ({round(top.get('confidence', 0) * 100, 1)}%)"
+
     artist = (
         video_channel
         if video_channel and video_channel != "Unknown Artist"
@@ -639,7 +651,7 @@ async def event_chat(request: dict):
     system_prompt = f"""You are a music industry professional. Write submission-ready content only.
 
 Task: "{event_title}" | Type: {event_type} | Date: {event_date}{f" | Release Date: {release_date}" if release_date else ""}
-Song: "{video_title}" by "{artist}"
+Song: "{video_title}" by "{artist}"{genre_block}
 Tone: {tone}
 
 {f"LYRICS:{chr(10)}{transcript_context}" if transcript_context else ""}

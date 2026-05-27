@@ -63,67 +63,34 @@ def _search_knowledge(query: str) -> str:
 # ---------------------------------------------------------------------------
 # Internal helper — formats librosa dict into a readable LLM prompt block
 # ---------------------------------------------------------------------------
-def _format_audio_features(audio_features: dict) -> str:
-    """
-    Converts the librosa dict into a readable block for the LLM prompt.
 
-    BPM reference (approximate):
-      60–80   → slow ballad, soul, lo-fi
-      80–100  → R&B, reggaeton, afrobeats
-      100–115 → hip-hop, trap (half-time feel at 60–70 BPM)
-      120–130 → pop, house, dance-pop
-      130–145 → UK drill, afrobeats uptempo
-      140–160 → drum & bass, phonk (aggressive), hardstyle
-      160+    → metal, punk, hyperpop
-
-    Energy reference:
-      0.0–0.3 → quiet, acoustic, lo-fi
-      0.3–0.6 → mid-energy, pop, R&B
-      0.6–0.8 → high energy, hip-hop, dance
-      0.8–1.0 → very high energy, EDM, metal, phonk
-    """
-    if not audio_features:
+def _format_genre_data(genre_data: dict) -> str:
+    if not genre_data or not genre_data.get("top_genres"):
         return ""
 
-    bpm = audio_features.get("bpm", 0)
-    energy = audio_features.get("energy", 0)
-    key = audio_features.get("key", "Unknown")
-    mode = audio_features.get("mode", "unknown")
-    duration = audio_features.get("duration_seconds", 0)
+    top_genres = genre_data["top_genres"]
+    primary = top_genres[0]
 
-    if bpm < 80:
-        bpm_hint = "slow tempo — suggests ballad, soul, lo-fi, or slowed phonk"
-    elif bpm < 100:
-        bpm_hint = "mid-slow tempo — suggests R&B, reggaeton, afrobeats, or trap (half-time)"
-    elif bpm < 115:
-        bpm_hint = "mid tempo — suggests hip-hop, trap, or boom bap"
-    elif bpm < 130:
-        bpm_hint = "uptempo — suggests pop, dance-pop, or house"
-    elif bpm < 145:
-        bpm_hint = "fast tempo — suggests UK drill, afrobeats uptempo, or dancehall"
-    elif bpm < 165:
-        bpm_hint = "very fast — suggests drum & bass, phonk, or hardstyle"
-    else:
-        bpm_hint = "extreme tempo — suggests metal, hyperpop, or punk"
+    primary_line = primary["genre"]
+    if primary.get("subgenre"):
+        primary_line += f" › {primary['subgenre']}"
+    primary_line += f" ({round(primary.get('confidence', 0) * 100, 1)}%)"
 
-    if energy < 0.3:
-        energy_hint = "low energy — acoustic, intimate, or lo-fi feel"
-    elif energy < 0.6:
-        energy_hint = "moderate energy — polished pop or R&B production"
-    elif energy < 0.8:
-        energy_hint = "high energy — club-ready, hip-hop, or dance track"
-    else:
-        energy_hint = "very high energy — aggressive production, EDM, metal, or phonk"
+    secondary_parts = []
+    for g in top_genres[1:]:
+        label = g["genre"]
+        if g.get("subgenre"):
+            label += f" › {g['subgenre']}"
+        label += f" ({round(g.get('confidence', 0) * 100, 1)}%)"
+        secondary_parts.append(label)
 
-    return f"""AUDIO FEATURES (extracted by librosa from the actual audio):
-  BPM:      {bpm} — {bpm_hint}
-  Energy:   {energy} — {energy_hint}
-  Key:      {key} {mode}
-  Duration: {duration}s
+    secondary_line = ", ".join(secondary_parts) if secondary_parts else "—"
 
-Use these audio features as strong signals for GENRE & SUBGENRE detection.
-Cross-reference BPM and energy with lyrical themes and language from the transcript.
-Example reasoning: BPM ~95 + Spanish lyrics + danceability → likely reggaeton or Latin trap."""
+    return f"""GENRE DATA (detected by Essentia Discogs-EffNet 400-class model):
+  Primary:  {primary_line}
+  Also:     {secondary_line}
+
+Use these as strong genre signals. Cross-reference with lyrical language and themes."""
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +100,7 @@ Example reasoning: BPM ~95 + Spanish lyrics + danceability → likely reggaeton 
 def analyze_marketing_potential(
     video_id: str,
     transcript_text: str,
-    audio_features: str = "",
+    genre_data: str = "",
     spotify_genres: str = "",
 ) -> str:
     """
@@ -153,7 +120,7 @@ def analyze_marketing_potential(
     Args:
         video_id:        The YouTube video ID (e.g. 'H5v3kku4y6Q').
         transcript_text: Transcript content retrieved by search_transcript.
-        audio_features:  Optional JSON string with BPM, energy, key, mode from librosa.
+        genre_data:      Optional JSON string with Essentia top_genres list.
         spotify_genres:  Optional comma-separated Spotify genre tags.
     """
     print(f"\n📊 [analyze_marketing_potential] Analyzing video: {video_id}")
@@ -167,18 +134,22 @@ def analyze_marketing_potential(
 
     print(f"   📝 Transcript sample received ({len(transcript_text)} chars)")
 
-    # Parse audio_features JSON string
-    parsed_audio = {}
-    if audio_features:
+ # Parse genre_data JSON string
+    parsed_genre = {}
+    if genre_data:
         try:
-            parsed_audio = json.loads(audio_features)
-            print(f"   🎵 Audio features: BPM={parsed_audio.get('bpm')} | "
-                  f"Energy={parsed_audio.get('energy')} | "
-                  f"Key={parsed_audio.get('key')} {parsed_audio.get('mode')}")
+            if isinstance(genre_data, dict):
+                parsed_genre = genre_data
+            else:
+                parsed_genre = json.loads(genre_data)
+            if parsed_genre.get("top_genres"):
+                top = parsed_genre["top_genres"][0]
+                print(f"   🎵 Genre data: {top.get('genre')} › {top.get('subgenre')} "
+                      f"({round(top.get('confidence', 0) * 100, 1)}%)")
         except Exception:
-            print(f"   ⚠️ Could not parse audio_features JSON — ignoring")
+            print("   ⚠️ Could not parse genre_data JSON — ignoring")
 
-    audio_features_block = _format_audio_features(parsed_audio)
+    genre_block = _format_genre_data(parsed_genre)   
 
     # Spotify genres block
     spotify_block = ""
@@ -213,7 +184,7 @@ PLATFORM PRIORITY ORDER:
 COMMERCIAL APPEAL:
 
 ---
-{audio_features_block}
+{genre_block}
 
 {spotify_block}
 
