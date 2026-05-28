@@ -12,6 +12,7 @@
 
 import os
 import json
+from unittest import loader
 
 MODELS_DIR = os.path.join(os.path.dirname(__file__), "..", "models")
 
@@ -24,10 +25,12 @@ def detect_genres(audio_path: str) -> dict:
         # ── Load audio ──
         loader = es.MonoLoader(filename=audio_path, sampleRate=16000, resampleQuality=4)
         audio = loader()
+        # Limit to first 60 seconds to avoid OOM on Render free tier
+        audio = audio[:60 * 16000]
         model_path = os.path.join(MODELS_DIR, "discogs-effnet-bs64-1.pb")
         print(f"[genre_detect] Looking for model at: {os.path.abspath(model_path)}")
         print(f"[genre_detect] File exists: {os.path.exists(model_path)}")
-        
+
         print(f"[genre_detect] Audio loaded: {len(audio) / 16000:.1f}s at 16000Hz")
 
         # ── Discogs-EffNet — audio → embeddings directly ──
