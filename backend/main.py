@@ -215,29 +215,11 @@ async def analyze(request: AnalyzeRequest):
         print(f"   ❌ /analyze error: {e}")
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
 
-    existing_audio_features = transcript_data.get("audio_features", {})
-
-    import asyncio
-    from pipeline import fetch_audio_features_background
-
-    if existing_audio_features:
-        embed_data = chunk_and_embed(
-            video_id=transcript_data["video_id"],
-            transcript_text=transcript_data["transcript_text"],
-        )
-        audio_features = existing_audio_features
-    else:
-        audio_task = fetch_audio_features_background(transcript_data["video_id"])
-
-        try:
-            embed_data = chunk_and_embed(
-                video_id=transcript_data["video_id"],
-                transcript_text=transcript_data["transcript_text"],
-            )
-            audio_features = await audio_task
-        except Exception as e:
-            print(f"   ❌ /analyze step error: {e}")
-            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    embed_data = chunk_and_embed(
+        video_id=transcript_data["video_id"],
+        transcript_text=transcript_data["transcript_text"],
+    )
+    audio_features = transcript_data.get("audio_features", {})
 
     if audio_features:
         print(f"   🎵 Audio features: BPM={audio_features.get('bpm')} | "

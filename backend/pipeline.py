@@ -356,7 +356,7 @@ def fetch_transcript(youtube_url: str) -> dict:
                 aai.settings.api_key = ASSEMBLYAI_API_KEY
                 config = aai.TranscriptionConfig(
                     language_detection=True,
-                    speech_model=aai.SpeechModel.universal,
+                    speech_models=[aai.SpeechModel.universal],
                 )
                 transcriber = aai.Transcriber(config=config)
                 aai_transcript = transcriber.transcribe(audio_path)
