@@ -32,6 +32,8 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
   const [errorMsg, setErrorMsg] = useState("");
   const [videoTitle, setVideoTitle] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [songTitle, setSongTitle] = useState("");
+  const [artistName, setArtistName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAnalyze = async () => {
@@ -41,12 +43,12 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
     try {
       if (selectedFile) {
         console.log("[UploadPanel] Uploading file:", selectedFile.name);
-        const data = await analyzeAudioFile(
-          selectedFile, 
-          sessionId, 
-          selectedFile.name.replace(/\.[^/.]+$/, ""), 
-          "Unknown Artist"
-        );
+      const data = await analyzeAudioFile(
+          selectedFile,
+          sessionId,
+          songTitle.trim() || selectedFile.name.replace(/\.[^/.]+$/, ""),
+          artistName.trim() || "Unknown Artist"
+        );  
         setVideoTitle(data.title);
         setStatus("success");
         onVideoLoaded(data);
@@ -84,6 +86,8 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
     setStatus("idle");
     setErrorMsg("");
     setVideoTitle("");
+    setSongTitle("");
+    setArtistName("");
   };
 
   return (
@@ -91,9 +95,9 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
       {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center">
-          <span className="text-white text-lg">♪</span>
+          <img src="/LOGO.png" alt="DropOperator" className="w-full h-full object-contain" />
         </div>
-        <h3 className="text-slate-800 font-semibold text-lg">AI Music</h3>
+
       </div>
 
       {/* Success state */}
@@ -193,6 +197,26 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
                 Clear file
               </button>
             )}
+          </div>
+
+          {/* Optional metadata */}
+          <div className="mb-4 flex flex-col gap-2">
+            <input
+              type="text"
+              value={songTitle}
+              onChange={(e) => setSongTitle(e.target.value)}
+              placeholder="Song name (optional)"
+              disabled={status === "loading"}
+              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-700 placeholder-slate-400 outline-none focus:border-slate-400 transition-all disabled:opacity-50"
+            />
+            <input
+              type="text"
+              value={artistName}
+              onChange={(e) => setArtistName(e.target.value)}
+              placeholder="Artist (optional)"
+              disabled={status === "loading"}
+              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-700 placeholder-slate-400 outline-none focus:border-slate-400 transition-all disabled:opacity-50"
+            />
           </div>
 
           {/* Analyze button */}

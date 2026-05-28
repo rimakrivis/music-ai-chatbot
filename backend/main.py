@@ -511,6 +511,11 @@ async def chat(request: ChatRequest):
       - Genre/mood only → search_transcript + analyze_marketing_potential (STOP)
       - Full plan → full chain including find_release_timing
       - How-to → search_marketing_knowledge
+      -if "spotify" in task_name.lower() or "pitch" in task_name.lower():
+    Before writing the Spotify pitch, you MUST ask:
+    1. What is the BPM of the track?
+    2. Do you have a music video, radio campaign, or ad budget planned?
+    Do not write the pitch until both are answered.
     """
     print(f"\n📥 [/chat] Session: {request.session_id} | Video: {request.video_id}")
     print(f"   Message: '{request.message}'")
@@ -654,6 +659,8 @@ Task: "{event_title}" | Type: {event_type} | Date: {event_date}{f" | Release Dat
 Song: "{video_title}" by "{artist}"{genre_block}
 Tone: {tone}
 
+IMPORTANT: If the user mentions a song name or artist name in their message, use those instead of the defaults above.
+
 {f"LYRICS:{chr(10)}{transcript_context}" if transcript_context else ""}
 {f"GUIDELINES:{chr(10)}{knowledge_context}" if knowledge_context else ""}
 {f"SAVED NOTES:{chr(10)}{doc_content[:400]}" if doc_content else ""}
@@ -661,9 +668,13 @@ Tone: {tone}
 Rules:
 - Follow GUIDELINES strictly if provided
 - Use LYRICS for specific song references
-- No placeholders ever — write real content
-- Spotify pitch: max 500 chars, MUST start with: {artist} — {video_title} (if both known)
+- No placeholders ever — write real content.
+- Spotify pitch Marketing Support pillar: scan the full conversation history for ANY user response about marketing assets. If the user said anything like "skip", "no", "not important", "later", "don't have", "no budget", "no video yet" → treat as skip, omit Marketing Support pillar entirely. If user confirmed specific assets → include only those. Never ask again after any answer was given.
+- Spotify pitch: max 500 chars, MUST start with the song title and artist name once only — never repeat them
+- Spotify pitch Sonic Specification: must include at least one comparable artist or sonic reference, never use generic phrases like "layered guitars" alone
+- Spotify pitch Target Audience: name specific Spotify playlist types that exist (e.g. "New Music Friday", "Indie Rock Road Trip") not just demographics
 - Always use the real artist name and song title — never omit them
+- If user mentions song name or artist in their message, use those instead of defaults
 - Output only the final content, no explanation"""
 
     try:
@@ -673,10 +684,7 @@ Rules:
             base_url="https://api.x.ai/v1",
         )
         history = request.get("messages", [])
-        conversation = [{"role": "system", "content": system_prompt}] + history if history else [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message},
-        ]
+        conversation = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": message}]
         response = await client.chat.completions.create(
             model=GROK_MODEL,
             messages=conversation,

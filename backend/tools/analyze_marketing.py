@@ -102,6 +102,7 @@ def analyze_marketing_potential(
     transcript_text: str,
     genre_data: str = "",
     spotify_genres: str = "",
+     marketing_assets: str = "",
 ) -> str:
     """
     Analyze the marketing potential of a song based on its transcript content.
@@ -131,7 +132,14 @@ def analyze_marketing_potential(
             "Please call search_transcript first with a query like "
             "'mood energy genre chorus feeling' and pass the result here."
         )
-
+    
+    if not marketing_assets or marketing_assets.strip().lower() in ("", "none", "not provided", "unknown"):
+        return (
+            "MISSING_INFO: Before I can complete the Spotify pitch, I need one more thing:\n\n"
+            "Do you have any marketing assets planned for this release?\n"
+            "For example: music video, radio campaign, Meta/TikTok ad budget, PR outreach, playlist pitching.\n\n"
+            "If yes — describe briefly. If nothing is planned yet, just say **skip**."
+        )
     print(f"   📝 Transcript sample received ({len(transcript_text)} chars)")
 
  # Parse genre_data JSON string
@@ -140,7 +148,7 @@ def analyze_marketing_potential(
         try:
             if isinstance(genre_data, dict):
                 parsed_genre = genre_data
-            else:
+            else: 
                 parsed_genre = json.loads(genre_data)
             if parsed_genre.get("top_genres"):
                 top = parsed_genre["top_genres"][0]

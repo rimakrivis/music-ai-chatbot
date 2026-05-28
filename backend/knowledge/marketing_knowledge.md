@@ -240,6 +240,32 @@ Press release structure:
 
 ---
 
+## Spotify Editorial Pitch — Real Examples
+
+---
+
+EXAMPLE 1
+The Broken Frames — Glass Ceiling. Driving 118 BPM alternative rock, drop-D rhythm guitars locked to a 4-on-the-floor kick and anthemic chorus architecture with reverb-saturated lead lines, in the vein of Editors, Interpol, and Fontaines D.C. (2023). Targets Indie Rock Road Trip, Dark & Stormy, and All New Rock playlists for listeners seeking anthemic post-punk energy during commutes and late-night drives. Backed by regional Lithuanian radio outreach to LRT Opus and M-1, an official music video, and Meta ad spend targeting 18–34 alternative rock listeners in LT/LV/EE markets.
+
+EXAMPLE 2
+Solar Drift — Open Road. Propulsive 122 BPM alternative rock with cathedral-reverb vocals, post-rock guitar swells and a slow-build cinematic arc recalling Mogwai, Muse, and Dora Jar (2024). Targets Evening Indie, Atmospheric Rock, and Cinematic Intensity playlists for listeners seeking high-energy escapism on long drives. Supported by a lyric video and playlist pitching campaign across the Baltics.
+
+EXAMPLE 3
+Pale Mirror — Closer Now. Sparse piano, breathy close-mic vocals, fingertip percussion and a melancholic drop structure at 74 BPM recalling Lana Del Rey, early Daughter, and Laufey (2023). Targets Sad Indie Pop, Late Night Vibes, and Acoustic Ache playlists for listeners processing loss late at night. No marketing budget — relies on organic TikTok short-form content and a strong Spotify pre-save campaign.
+
+EXAMPLE 4
+NOLIFE — Neon Drift. Hypnotic 110 BPM indie electronic, arpeggiated analog synths over half-time trap percussion referencing Bonobo, Moderat, and Floating Points (2022). Built for Low Key Vibes, Electronic Rising, and Late Night Drive playlists. Backed by a TikTok organic rollout and YouTube pre-roll targeting electronic listeners aged 20–30.
+
+EXAMPLE 5
+Miglė Saul — Golden Hour. Cinematic pop at 98 BPM, orchestral string arrangement over a pulsing groove referencing Lorde, Sigrid, and Gracie Abrams (2024). Engineered for Emotional Pop Hits, Sunset Drive, and Soft Pop Hits playlists. Supported by an official music video and Meta campaign targeting indie pop audiences aged 18–32.
+
+EXAMPLE 6
+Tadas Vilkas — Forest Floor. Fingerpicked acoustic indie folk at 84 BPM, intimate room recording with minimal reverb and layered close harmonies recalling Novo Amor, Iron & Wine, and Adrianne Lenker (2023). Targets Acoustic Mornings, Singer-Songwriter Sundays, and Peaceful Guitar playlists for listeners in wind-down and focus contexts.
+
+EXAMPLE 7
+K.Nuga — City Never Sleeps. Hard-hitting 92 BPM hip-hop, 808-driven low end and double-time flow referencing Kendrick Lamar, early Joey Bada$$, and JID (2023). Targets Hip-Hop Central, Underground Rap, and Late Night Hustle playlists for urban listeners aged 18–28. Backed by Instagram Reels rollout and a featured placement deal with a regional streetwear brand.
+---
+
 ## YouTube Video Description — Tactical Optimization & Templates
 
 ### Algorithm Compliance and Layout Selection Rules

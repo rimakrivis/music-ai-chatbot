@@ -5,8 +5,12 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "AI Music Dashboard",
-  description: "AI-powered music marketing dashboard. Manage your releases, schedule content, and chat with AI.",
+  title: "DropOperator",
+  description: "AI-powered music marketing dashboard.",
+  icons: {
+    icon: "/LOGO.png",
+    shortcut: "/LOGO.png",
+  },
 };
 
 export const viewport: Viewport = {

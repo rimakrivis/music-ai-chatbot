@@ -363,7 +363,7 @@ export default function DashboardPage() {
         <main className="overflow-y-auto pr-2 -mr-2">
           {events.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
-              <span className="text-5xl">🎵</span>
+              <img src="/LOGO.png" alt="DropOperator" className="h-16 w-16 object-contain opacity-40" />
               <p className="text-sm">
                 Load a song and ask for a marketing plan to see your schedule here.
               </p>
