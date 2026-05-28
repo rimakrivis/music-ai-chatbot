@@ -255,7 +255,7 @@ export default function DashboardPage() {
             return (
               eventTitle.includes(taskTitle) ||
               taskTitle.includes(eventTitle) ||
-              taskTitle.split(" ").filter(w => w.length > 3).every(w => eventTitle.includes(w))
+              taskTitle.split(" ").filter((w: string) => w.length > 3).every((w: string) => eventTitle.includes(w))
             );
           });
           if (toDelete) {
