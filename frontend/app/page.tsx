@@ -299,15 +299,15 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-[#f7f5f2] p-6">
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-6 h-[calc(100vh-48px)]">
 
-        <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <MiniCalendar events={events} onEventClick={handleEventClick} />
-          <TodoListPanel
-            todos={todos}
-            onToggle={handleToggleTodo}
-            onTitleClick={handleTodoTitleClick}
-          />
-          <ProgressBar progress={progressPercent} />
-        </aside>
+      <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
+        <MiniCalendar events={events} onEventClick={handleEventClick} />
+        <ProgressBar progress={progressPercent} />
+        <TodoListPanel
+          todos={todos}
+          onToggle={handleToggleTodo}
+          onTitleClick={handleTodoTitleClick}
+        />
+      </aside> 
 
         <main className="overflow-y-auto pr-2 -mr-2">
           {events.length === 0 ? (
