@@ -12,6 +12,10 @@ Independent musicians often release music without a marketing strategy. DropOper
 
 ## Live Demo
 
+**Watch live demo:**
+
+https://www.youtube.com/watch?v=HG0S68oI20M
+
 | Service | URL |
 |---|---|
 | Frontend | https://music-ai-chat.vercel.app |
