@@ -119,9 +119,9 @@ Independent musicians often release music without a marketing strategy. DropOper
 ## Features
 
 - **YouTube URL analysis** — fetches official captions via `youtube-transcript-api`; falls back to AssemblyAI Whisper transcription if captions are unavailable
-- **Audio file upload** — accepts MP3/WAV/M4A/OGG/FLAC; transcribes via AssemblyAI and detects genre via Essentia
-- **ML genre detection** — Essentia Discogs-EffNet (audio → 1280-dim embeddings) + 400-class Discogs genre classifier; runs on the first 60 seconds of audio
-- **RAG-backed marketing knowledge** — `marketing_knowledge.md` chunked by `##` headers, embedded, and stored in Pinecone; retrieved at query time by `search_marketing_knowledge`
+- **Audio file upload** — accepts MP3/WAV; transcribes via AssemblyAI and detects genre via Essentia
+- **ML genre detection** — Essentia Discogs-EffNet (audio → 1280-dim embeddings) + 400-class Discogs genre classifier
+- **RAG-backed marketing knowledge** — chunked by `##` and `###` headers (protected from further splitting if they contain templates, layouts, or formulas), recursively split at 600 characters with 150-character overlap otherwise, embedded, and stored in Pinecone; retrieved at query time by `search_marketing_knowledge`
 - **LangGraph ReAct agent** — multi-turn, tool-using agent with `InMemorySaver` conversation memory scoped by `session_id`; calls up to 6 specialist tools per turn
 - **Structured release plan** — agent outputs a dated checklist; `extract_tasks_from_response()` calls GPT-4o-mini to parse every `[ ]` line into `calendar_events` and `todo_items`
 - **Task confirmation card** — user selects which extracted tasks to save before they are written to Supabase
@@ -129,10 +129,29 @@ Independent musicians often release music without a marketing strategy. DropOper
 - **Per-event creative assistant** (`/event-chat`) — scoped chat that retrieves relevant knowledge chunks and transcript context before generating content
 - **Notes panel** — AI-generated content can be saved to a per-event notes doc (persisted in Supabase `saved_content` column)
 - **Spotify editorial pitch generation** — 3-pillar structure (Sonic Specification, Artist Story, Marketing Support), calibrated from real pitch examples in the knowledge base
-- **Artist info** — real Spotify follower count, popularity score, genres, and top tracks via Spotify Web API
+- **Artist info** — capable of retrieving real Spotify data (follower count, popularity score, genres, top tracks) via Spotify Web API; currently simulated due to free tier limitations
 - **Session reset** — `DELETE /session/{session_id}` wipes all events and todos for a session
 
 ---
+## Frontend UI
+
+**Single-page dashboard** — three-column CSS Grid (`320px | 1fr | 340px`). All state lives in `page.tsx` and is passed as props. Session ID is generated once via `crypto.randomUUID()` and stored in `localStorage`.
+
+**UploadPanel** — YouTube URL input (regex validated) or audio file upload (MP3/WAV). Selecting one mode clears the other. Last loaded song persists in `localStorage` across refreshes.
+
+**AIChatbot + TaskConfirmationCard** — After any agent response containing tasks, a confirmation card appears inline in the chat with two checkable lists (calendar events + todos), both pre-selected. "Save N items" fires `POST /calendar/events` and `POST /todos` in parallel, then reloads from Supabase to get real row IDs.
+
+**DailyFeed** — Events grouped by date under large day-number headings. Each card has a context-aware SVG icon (Spotify, YouTube, Instagram, radio, upload, cover art) resolved from the event title. Inline **Reschedule** (date picker) and **Delete** sit below each card. Agent delete confirmations (`{"action":"delete"}` JSON blocks) are intercepted in `page.tsx` and trigger deletion automatically.
+
+**MiniCalendar** — Auto-jumps to the first event's month on load. Color-coded dots per event type. Single-event days open the drawer directly; multi-event days show a popover picker.
+
+**TodoListPanel** — Checkbox toggles completion and mirrors the linked calendar event. Title click opens the `EventDrawer` for that task. Feeds the `ProgressBar`.
+
+**ProgressBar** — Eight-segment rainbow bar (green → blue) that fills segment by segment as todo completion rises.
+
+**EventDrawer** — Slide-in two-panel drawer (`max-w-2xl`):
+- **Left — Notes**: shows `savedContent` from Supabase as formatted text
+- **Right — Creative Assistant**: scoped chat sending full conversation history, event metadata, release date, and genre data to `POST /event-chat`. Each AI response offers **Replace / Add below / Skip** to save output into the notes panel (PATCHed to Supabase immediately)
 
 ## Project Structure
 
