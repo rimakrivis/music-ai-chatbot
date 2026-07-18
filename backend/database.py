@@ -31,12 +31,63 @@ async def create_tables():
 
 
 # ---------------------------------------------------------------------------
+# Bands
+# ---------------------------------------------------------------------------
+
+async def get_or_create_band(owner_id: str) -> str:
+    """
+    Look up the band belonging to this owner_id (the persistent browser UUID).
+    If none exists yet, create one. Returns the band's id (as a string).
+
+    This is the ONLY place a new band gets created right now — one band per
+    owner_id. When multi-band support is added later, this function stays,
+    it just stops being the only way a band gets created.
+    """
+    if not owner_id:
+        raise ValueError("❌ get_or_create_band called with empty owner_id")
+
+    try:
+        supabase = get_supabase()
+
+        result = (
+            supabase.table("bands")
+            .select("id")
+            .eq("owner_id", owner_id)
+            .limit(1)
+            .execute()
+        )
+
+        if result.data:
+            band_id = result.data[0]["id"]
+            print(f"🎸 Found existing band {band_id} for owner {owner_id}")
+            return band_id
+
+        insert_result = (
+            supabase.table("bands")
+            .insert({"owner_id": owner_id})
+            .execute()
+        )
+
+        if not insert_result.data:
+            raise RuntimeError("❌ Band insert returned no data")
+
+        band_id = insert_result.data[0]["id"]
+        print(f"🎸 Created new band {band_id} for owner {owner_id}")
+        return band_id
+
+    except Exception as e:
+        print(f"❌ Error in get_or_create_band: {e}")
+        raise
+
+
+# ---------------------------------------------------------------------------
 # Calendar Events
 # ---------------------------------------------------------------------------
 
-async def save_calendar_events(session_id: str, video_id: str, events: list) -> int:
-    """Insert multiple calendar events. Returns count saved."""
-    print(f"📅 Saving {len(events)} calendar events for session {session_id}")
+async def save_calendar_events(band_id: str, video_id: str | None, events: list) -> int:
+    """Insert multiple calendar events for a band. video_id is optional —
+    only present when the event is tied to a specific uploaded song."""
+    print(f"📅 Saving {len(events)} calendar events for band {band_id}")
 
     if not events:
         return 0
@@ -45,7 +96,7 @@ async def save_calendar_events(session_id: str, video_id: str, events: list) -> 
         supabase = get_supabase()
         rows = [
             {
-                "session_id": session_id,
+                "band_id": band_id,
                 "video_id": video_id,
                 "title": event["title"],
                 "date": event["date"],
@@ -61,18 +112,18 @@ async def save_calendar_events(session_id: str, video_id: str, events: list) -> 
         raise
 
 
-async def get_calendar_events(session_id: str) -> list:
-    """Fetch all calendar events for a session, ordered by date."""
+async def get_calendar_events(band_id: str) -> list:
+    """Fetch all calendar events for a band, ordered by date."""
     try:
         supabase = get_supabase()
         result = (
             supabase.table("calendar_events")
             .select("*")
-            .eq("session_id", session_id)
+            .eq("band_id", band_id)
             .order("date")
             .execute()
         )
-        print(f"📅 Fetched {len(result.data)} calendar events for session {session_id}")
+        print(f"📅 Fetched {len(result.data)} calendar events for band {band_id}")
         return result.data
     except Exception as e:
         print(f"❌ Error fetching calendar events: {e}")
@@ -92,15 +143,22 @@ async def update_calendar_event(event_id: int, updates: dict) -> bool:
     except Exception as e:
         print(f"❌ Error updating calendar event: {e}")
         raise
-async def delete_session_data(session_id: str) -> bool:
+
+
+async def delete_band_data(band_id: str) -> bool:
+    """Delete all calendar events + todos belonging to a band (used by the
+    'reset' button). Renamed from delete_session_data — same behavior,
+    now scoped by band_id instead of session_id."""
     try:
         supabase = get_supabase()
-        supabase.table("calendar_events").delete().eq("session_id", session_id).execute()
-        supabase.table("todos").delete().eq("session_id", session_id).execute()
+        supabase.table("calendar_events").delete().eq("band_id", band_id).execute()
+        supabase.table("todos").delete().eq("band_id", band_id).execute()
+        print(f"✅ Deleted all data for band {band_id}")
         return True
     except Exception as e:
-        print(f"❌ delete_session_data error: {e}")
+        print(f"❌ delete_band_data error: {e}")
         return False
+
 
 async def delete_calendar_event(event_id: int) -> bool:
     """Delete a calendar event by id."""
@@ -118,9 +176,10 @@ async def delete_calendar_event(event_id: int) -> bool:
 # Todos
 # ---------------------------------------------------------------------------
 
-async def save_todos(session_id: str, video_id: str, items: list) -> int:
-    """Insert multiple todo items. Returns count saved."""
-    print(f"✅ Saving {len(items)} todos for session {session_id}")
+async def save_todos(band_id: str, video_id: str | None, items: list) -> int:
+    """Insert multiple todo items for a band. video_id is optional —
+    only present when the todo is tied to a specific uploaded song."""
+    print(f"✅ Saving {len(items)} todos for band {band_id}")
 
     if not items:
         return 0
@@ -129,7 +188,7 @@ async def save_todos(session_id: str, video_id: str, items: list) -> int:
         supabase = get_supabase()
         rows = [
             {
-                "session_id": session_id,
+                "band_id": band_id,
                 "video_id": video_id,
                 "title": item["title"],
                 "due_date": item.get("due_date"),
@@ -144,18 +203,18 @@ async def save_todos(session_id: str, video_id: str, items: list) -> int:
         raise
 
 
-async def get_todos(session_id: str) -> list:
-    """Fetch all todos for a session, ordered by created_at."""
+async def get_todos(band_id: str) -> list:
+    """Fetch all todos for a band, ordered by created_at."""
     try:
         supabase = get_supabase()
         result = (
             supabase.table("todos")
             .select("*")
-            .eq("session_id", session_id)
+            .eq("band_id", band_id)
             .order("created_at")
             .execute()
         )
-        print(f"✅ Fetched {len(result.data)} todos for session {session_id}")
+        print(f"✅ Fetched {len(result.data)} todos for band {band_id}")
         return result.data
     except Exception as e:
         print(f"❌ Error fetching todos: {e}")

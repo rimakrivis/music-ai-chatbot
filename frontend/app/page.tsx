@@ -14,6 +14,7 @@ import { sendMessage, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEv
 
 export default function DashboardPage() {
   const [sessionId, setSessionId] = useState<string>("");
+  const [bandId, setBandId] = useState<string>("");
 
   useEffect(() => {
     let stored = localStorage.getItem("music_ai_session_id");
@@ -24,6 +25,25 @@ export default function DashboardPage() {
     setSessionId(stored);
   }, []);
 
+  useEffect(() => {
+    if (!sessionId) return;
+    const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    fetch(`${API}/band`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ owner_id: sessionId }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Band fetch failed: ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        setBandId(data.band_id);
+        console.log("[page] band_id ready:", data.band_id);
+      })
+      .catch((err) => console.error("[page] Failed to get/create band", err));
+  }, [sessionId]);
+
   const [videoInfo, setVideoInfo] = useState<AnalyzeResponse | null>(() => {
     if (typeof window === "undefined") return null;
     const stored = localStorage.getItem("music_ai_last_video");
@@ -31,13 +51,14 @@ export default function DashboardPage() {
   });
 
   const [audioFeatures, setAudioFeatures] = useState<Record<string, unknown> | null>(null);
+  const [skippedSong, setSkippedSong] = useState(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
+      content: "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more. Or skip the upload to plan a concert or campaign instead.",
     },
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -45,10 +66,11 @@ export default function DashboardPage() {
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   const loadFromSupabase = useCallback(async () => {
+    if (!bandId) return;
     try {
       const [eventsRes, todosRes] = await Promise.all([
-        fetch(`${API}/calendar/events/${sessionId}`),
-        fetch(`${API}/todos/${sessionId}`),
+        fetch(`${API}/calendar/events/${bandId}`),
+        fetch(`${API}/todos/${bandId}`),
       ]);
       const eventsData = await eventsRes.json();
       const todosData = await todosRes.json();
@@ -79,11 +101,11 @@ export default function DashboardPage() {
     } catch (e) {
       console.error("[page] Failed to load from Supabase", e);
     }
-  }, [sessionId, API]);
+  }, [bandId, API]);
 
   useEffect(() => {
-    if (sessionId) loadFromSupabase();
-  }, [sessionId, loadFromSupabase]);
+    if (bandId) loadFromSupabase();
+  }, [bandId, loadFromSupabase]);
 
   useEffect(() => {
     if (!videoInfo?.video_id) return;
@@ -105,6 +127,7 @@ export default function DashboardPage() {
   }, [videoInfo?.video_id]);
 
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
+    setSkippedSong(false);
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
     if (video.audio_features && Object.keys(video.audio_features).length > 0) {
@@ -115,6 +138,18 @@ export default function DashboardPage() {
       {
         role: "assistant",
         content: `✅ Loaded **"${video.title}"** by ${video.channel}. I've indexed the transcript (${video.word_count} words). Ask me anything — lyrics, marketing plan, release timing, or Spotify stats!`,
+      },
+    ]);
+    setEvents([]);
+    setTodos([]);
+  }, []);
+
+  const handleSkipUpload = useCallback(() => {
+    setSkippedSong(true);
+    setChatMessages([
+      {
+        role: "assistant",
+        content: "No problem — tell me about your concert or campaign (date, location, expected audience, what you need help with) and I'll help build a plan.",
       },
     ]);
     setEvents([]);
@@ -223,11 +258,11 @@ export default function DashboardPage() {
   }
 
   const handleSendMessage = async (message: string) => {
-    if (!videoInfo) {
+    if (!videoInfo && !skippedSong) {
       setChatMessages((prev) => [
         ...prev,
         { role: "user", content: message },
-        { role: "assistant", content: "Please load a YouTube song first using the panel above." },
+        { role: "assistant", content: "Please load a YouTube song first, or skip to plan without one." },
       ]);
       return;
     }
@@ -237,11 +272,11 @@ export default function DashboardPage() {
 
     try {
       const data = await sendMessage(
-        videoInfo.video_id,
+        videoInfo?.video_id ?? "",
         message,
         sessionId,
-        videoInfo.title,
-        videoInfo.channel,
+        videoInfo?.title ?? "",
+        videoInfo?.channel ?? "",
         audioFeatures ?? undefined,
       );
 
@@ -326,7 +361,7 @@ export default function DashboardPage() {
         </main>
 
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <UploadPanel onVideoLoaded={handleVideoLoaded} sessionId={sessionId} />
+          <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
           <AIChatbot
             messages={chatMessages}
             onSendMessage={handleSendMessage}
@@ -335,7 +370,7 @@ export default function DashboardPage() {
               if (!msg.tasks || msg.tasksConfirmed) return null;
               return (
                 <TaskConfirmationCard
-                  sessionId={sessionId}
+                  bandId={bandId}
                   videoId={videoInfo?.video_id ?? ""}
                   calendarEvents={msg.tasks.calendar_events}
                   todoItems={msg.tasks.todo_items}
@@ -362,15 +397,16 @@ export default function DashboardPage() {
 
       <button
         onClick={async () => {
-          await fetch(`${API}/session/${sessionId}`, { method: "DELETE" });
+          await fetch(`${API}/band/${bandId}`, { method: "DELETE" });
           setEvents([]);
           setTodos([]);
+          setSkippedSong(false);
           setChatMessages([
-            { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh." },
+            { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh, or skip to plan without one." },
           ]);
         }}
         className="fixed bottom-4 left-4 text-xs text-slate-300 hover:text-rose-400 transition-colors"
-        title="Clear session"
+        title="Clear band data"
       >
         ↺ reset
       </button>

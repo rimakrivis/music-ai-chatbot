@@ -23,10 +23,11 @@ const SpinnerIcon = () => (
 
 interface UploadPanelProps {
   onVideoLoaded: (video: AnalyzeResponse) => void;
-  sessionId: string; // Added to handle multi-session architecture
+  onSkip: () => void; // NEW — lets the user plan without a song
+  sessionId: string;
 }
 
-export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelProps) {
+export default function UploadPanel({ onVideoLoaded, onSkip, sessionId }: UploadPanelProps) {
   const [url, setUrl] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
@@ -34,6 +35,7 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [songTitle, setSongTitle] = useState("");
   const [artistName, setArtistName] = useState("");
+  const [skipped, setSkipped] = useState(false); // NEW — local view state
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleAnalyze = async () => {
@@ -88,6 +90,16 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
     setVideoTitle("");
     setSongTitle("");
     setArtistName("");
+    setSkipped(false);
+  };
+
+  const handleSkipClick = () => {
+    setSkipped(true);
+    onSkip();
+  };
+
+  const handleUndoSkip = () => {
+    setSkipped(false);
   };
 
   return (
@@ -100,8 +112,24 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
 
       </div>
 
-      {/* Success state */}
-      {status === "success" ? (
+      {/* Skipped state — planning without a song */}
+      {skipped ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-3">
+            <div className="text-slate-500 mt-0.5 shrink-0"><CheckIcon /></div>
+            <div>
+              <p className="text-slate-700 text-sm font-medium">Planning without a song</p>
+              <p className="text-slate-500 text-xs mt-0.5">Tell the assistant about your concert or campaign in the chat.</p>
+            </div>
+          </div>
+          <button
+            onClick={handleUndoSkip}
+            className="text-slate-400 hover:text-slate-600 text-xs text-center transition-colors"
+          >
+            Add a song after all →
+          </button>
+        </div>
+      ) : status === "success" ? (
         <div className="flex flex-col gap-3">
           <div className="flex items-start gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-3">
             <div className="text-green-500 mt-0.5 shrink-0"><CheckIcon /></div>
@@ -227,6 +255,17 @@ export default function UploadPanel({ onVideoLoaded, sessionId }: UploadPanelPro
           >
             {status === "loading" ? "Analyzing..." : "Analyze Song"}
           </button>
+
+          {/* Skip — plan without a song */}
+          {status !== "loading" && (
+            <button
+              type="button"
+              onClick={handleSkipClick}
+              className="w-full text-slate-400 hover:text-slate-600 text-xs text-center mt-3 transition-colors"
+            >
+              Skip — plan a concert or campaign without a song →
+            </button>
+          )}
         </>
       )}
     </div>

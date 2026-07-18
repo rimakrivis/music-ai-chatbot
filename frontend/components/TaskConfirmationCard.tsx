@@ -14,7 +14,7 @@ interface TodoItem {
 }
 
 interface TaskConfirmationCardProps {
-  sessionId: string;
+  bandId: string;
   videoId: string;
   calendarEvents: CalendarEvent[];
   todoItems: TodoItem[];
@@ -33,7 +33,7 @@ const TYPE_PILL: Record<string, string> = {
 };
 
 export default function TaskConfirmationCard({
-  sessionId, videoId, calendarEvents, todoItems, onConfirm, onDismiss
+  bandId, videoId, calendarEvents, todoItems, onConfirm, onDismiss
 }: TaskConfirmationCardProps) {
   const [selectedEvents, setSelectedEvents] = useState<boolean[]>(calendarEvents.map(() => true));
   const [selectedTodos, setSelectedTodos] = useState<boolean[]>(todoItems.map(() => true));
@@ -53,14 +53,14 @@ export default function TaskConfirmationCard({
         await fetch(`${API}/calendar/events`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: sessionId, video_id: videoId, events: eventsToSave }),
+          body: JSON.stringify({ band_id: bandId, video_id: videoId || null, events: eventsToSave }),
         });
       }
       if (todosToSave.length > 0) {
         await fetch(`${API}/todos`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: sessionId, video_id: videoId, items: todosToSave }),
+          body: JSON.stringify({ band_id: bandId, video_id: videoId || null, items: todosToSave }),
         });
       }
       onConfirm();

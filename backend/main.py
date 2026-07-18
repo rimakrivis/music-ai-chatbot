@@ -47,6 +47,7 @@ import httpx as _httpx
 
 from database import (
     create_tables,
+    get_or_create_band,
     save_calendar_events,
     get_calendar_events,
     update_calendar_event,
@@ -55,7 +56,7 @@ from database import (
     get_todos,
     update_todo,
     delete_todo,
-    delete_session_data,
+    delete_band_data,
 )
 from config import GROK_MODEL, validate_config, IS_PRODUCTION, ENVIRONMENT, OPENAI_API_KEY, XAI_API_KEY,  GROK_MODEL, GROK_TEMPERATURE
 from pipeline import (
@@ -73,6 +74,9 @@ from agent import create_music_agent, run_agent
 
 class AnalyzeRequest(BaseModel):
     youtube_url: str
+
+class BandRequest(BaseModel):
+    owner_id: str
 
 
 class ChatRequest(BaseModel):
@@ -194,6 +198,21 @@ async def health():
         "environment": ENVIRONMENT,
         "agent_ready": "agent" in agent_state,
     }
+
+
+# ---------------------------------------------------------------------------
+# /band — find or create the band for a given owner_id (browser UUID)
+# ---------------------------------------------------------------------------
+
+@app.post("/band")
+async def get_band(request: BandRequest):
+    print(f"\n📥 [/band] owner_id: {request.owner_id}")
+    try:
+        band_id = await get_or_create_band(request.owner_id)
+        return {"band_id": band_id, "status": "ok"}
+    except Exception as e:
+        print(f"❌ POST /band: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +739,7 @@ async def get_transcript(video_id: str):
 async def create_calendar_events(request: dict):
     try:
         saved = await save_calendar_events(
-            request["session_id"], request["video_id"], request["events"]
+            request["band_id"], request.get("video_id"), request["events"]
         )
         return {"saved": saved, "status": "ok"}
     except Exception as e:
@@ -728,10 +747,10 @@ async def create_calendar_events(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/calendar/events/{session_id}")
-async def read_calendar_events(session_id: str):
+@app.get("/calendar/events/{band_id}")
+async def read_calendar_events(band_id: str):
     try:
-        events = await get_calendar_events(session_id)
+        events = await get_calendar_events(band_id)
         return {"events": events}
     except Exception as e:
         print(f"❌ GET /calendar/events: {e}")
@@ -762,13 +781,13 @@ async def remove_calendar_event(event_id: int):
 # Session delete — clears all events + todos for a session
 # ---------------------------------------------------------------------------
 
-@app.delete("/session/{session_id}")
-async def delete_session(session_id: str):
+@app.delete("/band/{band_id}")
+async def delete_band(band_id: str):
     try:
-        deleted = await delete_session_data(session_id)
+        deleted = await delete_band_data(band_id)
         return {"deleted": deleted, "status": "ok"}
     except Exception as e:
-        print(f"❌ DELETE /session: {e}")
+        print(f"❌ DELETE /band: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -780,7 +799,7 @@ async def delete_session(session_id: str):
 async def create_todos(request: dict):
     try:
         saved = await save_todos(
-            request["session_id"], request["video_id"], request["items"]
+            request["band_id"], request.get("video_id"), request["items"]
         )
         return {"saved": saved, "status": "ok"}
     except Exception as e:
@@ -788,10 +807,10 @@ async def create_todos(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/todos/{session_id}")
-async def read_todos(session_id: str):
+@app.get("/todos/{band_id}")
+async def read_todos(band_id: str):
     try:
-        items = await get_todos(session_id)
+        items = await get_todos(band_id)
         return {"items": items}
     except Exception as e:
         print(f"❌ GET /todos: {e}")
