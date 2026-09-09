@@ -1,0 +1,21 @@
+# -------------------------------------------------------------------
+# requirements-local.txt
+#
+# LOCAL-ONLY dependencies. Not used by Render — Render only reads
+# requirements.txt. This file exists so the heavy Essentia package
+# stays out of the production install while remaining fully available
+# for local development (real genre detection via the Discogs-EffNet
+# models in backend/models/).
+#
+# Install locally with BOTH files together:
+#   pip install -r requirements.txt -r requirements-local.txt
+#
+# (In your conda env `music-ai`, run that from inside backend/)
+#
+# TO REMOVE ESSENTIA FROM LOCAL DEV (rare — you'd fall back to no
+# genre detection locally too):
+#   Just stop including this file in your install command. No other
+#   change needed — genre_detect.py already handles the missing
+#   import gracefully.
+# -------------------------------------------------------------------
+essentia-tensorflow==2.1b6.dev1110

@@ -159,5 +159,28 @@ yt-dlp==2026.3.17
 zipp==3.23.1
 zstandard==0.25.0
 python-multipart
-essentia-tensorflow==2.1b6.dev1110
 
+# -------------------------------------------------------------------
+# essentia-tensorflow is DELIBERATELY REMOVED from this file.
+#
+# Why: it's a heavy native-compiled package (~170MB+ RAM at runtime)
+# that blows past Render's free/Starter 512MB memory limit. Render
+# installs from THIS file, so removing it here is what actually saves
+# memory on deploy — code-level try/except around the Essentia import
+# in genre_detect.py is not enough by itself, since pip still installs
+# the package before any Python code runs.
+#
+# genre_detect.py already handles its absence safely: it catches
+# ImportError and returns {} (no genre data), which analyze_marketing.py
+# already treats as optional. No crash, no code change needed.
+#
+# TO TURN ESSENTIA BACK ON IN PRODUCTION (e.g. after upgrading off the
+# free tier):
+#   1. Move the line below back up into the main list above:
+#        essentia-tensorflow==2.1b6.dev1110
+#   2. Delete it from requirements-local.txt (or leave it, it's harmless
+#      to have it in both once production supports it)
+#   3. Redeploy on Render
+#
+# essentia-tensorflow==2.1b6.dev1110   <-- move this line up to re-enable
+# -------------------------------------------------------------------
