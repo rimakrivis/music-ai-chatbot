@@ -53,14 +53,36 @@ def _trim_messages(messages: list, keep_last_n_human_turns: int = 6) -> list:
 
 
 # ---------------------------------------------------------------------------
+# STATIC_SYSTEM_PROMPT — defined above _build_system_prompt now, since the
+# minimal project_type guard below returns it directly for non-release types.
+# ---------------------------------------------------------------------------
+STATIC_SYSTEM_PROMPT = """You are DropOperator — a music release planner.
+Use search_marketing_knowledge before every plan and every how-to question.
+Always respond in the same language the user writes in."""
+
+
+# ---------------------------------------------------------------------------
 # System prompt builder — now accepts genre_data dict instead of audio_features
 # ---------------------------------------------------------------------------
+RELEASE_PROJECT_TYPES = {"single_release", "album_release"}
+
 def _build_system_prompt(
     video_id: str,
     video_title: str = "",
     video_channel: str = "",
     genre_data: dict = None,       # ← replaces audio_features_text / audio_features_json
+    project_type: str = None,      # ← NEW: "single_release" | "album_release" | "concert" | "social_campaign" | "other" | None
 ) -> str:
+    # ------------------------------------------------------------------
+    # MINIMAL GUARD (per Rima — no new concert/campaign prompt content
+    # written here on purpose; that's a separate task). This only stops
+    # the release checklist from firing on non-release project types by
+    # falling back to the existing generic STATIC_SYSTEM_PROMPT.
+    # ------------------------------------------------------------------
+    if project_type and project_type not in RELEASE_PROJECT_TYPES:
+        print(f"   🟡 project_type='{project_type}' → generic prompt, skipping release checklist")
+        return STATIC_SYSTEM_PROMPT
+
     video_context = f"video ID: {video_id}"
     if video_title:
         video_context += f' | title: "{video_title}"'
@@ -232,10 +254,6 @@ Always respond in the same language the user writes in.
 # Agent factory — unchanged
 # ---------------------------------------------------------------------------
 
-STATIC_SYSTEM_PROMPT = """You are DropOperator — a music release planner.
-Use search_marketing_knowledge before every plan and every how-to question.
-Always respond in the same language the user writes in."""
-
 def create_music_agent():
     print("\n🤖 [agent] Creating music agent...")
     agent = create_react_agent(
@@ -259,8 +277,9 @@ async def run_agent(
     video_title: str = "",
     video_channel: str = "",
     genre_data: dict = None,       # ← renamed from audio_features
+    project_type: str = None,      # ← NEW: passed through from /chat request
 ) -> dict:
-    print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id}")
+    print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id} | project_type: {project_type}")
     print(f"   Message: '{message}'")
 
     if genre_data and genre_data.get("top_genres"):
@@ -277,6 +296,7 @@ async def run_agent(
         video_title,
         video_channel,
         genre_data,
+        project_type,
     )
 
     config = {"configurable": {"thread_id": session_id}}

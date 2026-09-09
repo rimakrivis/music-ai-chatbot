@@ -6,6 +6,7 @@ import TodoListPanel from "@/components/dashboard/TodoListPanel";
 import ProgressBar from "@/components/dashboard/ProgressBar";
 import DailyFeed from "@/components/dashboard/DailyFeed";
 import UploadPanel from "@/components/dashboard/UploadPanel";
+import ProjectTypeSelector, { ProjectType } from "@/components/dashboard/ProjectTypeSelector";
 import AIChatbot from "@/components/dashboard/AIChatbot";
 import EventDrawer from "@/components/dashboard/EventDrawer";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
@@ -52,6 +53,7 @@ export default function DashboardPage() {
 
   const [audioFeatures, setAudioFeatures] = useState<Record<string, unknown> | null>(null);
   const [skippedSong, setSkippedSong] = useState(false);
+  const [projectType, setProjectType] = useState<ProjectType | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -155,6 +157,38 @@ export default function DashboardPage() {
     setEvents([]);
     setTodos([]);
   }, []);
+
+  // NEW — reacts to ProjectTypeSelector button clicks.
+  // Release types (single/album) behave like the old default flow (UploadPanel visible).
+  // Non-release types (concert/social_campaign/other) behave like the existing "skip" flow —
+  // chat-only, no song upload — just with a message tailored to the chosen type.
+  useEffect(() => {
+    if (!projectType) return;
+
+    const isReleaseType = projectType === "single_release" || projectType === "album_release";
+
+    if (isReleaseType) {
+      setSkippedSong(false);
+      setChatMessages([
+        {
+          role: "assistant",
+          content:
+            "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more.",
+        },
+      ]);
+    } else {
+      setSkippedSong(true);
+      const label = projectType.replace("_", " ");
+      setChatMessages([
+        {
+          role: "assistant",
+          content: `Tell me about your ${label} — dates, goals, budget, anything relevant — and I'll help build a plan.`,
+        },
+      ]);
+    }
+    setEvents([]);
+    setTodos([]);
+  }, [projectType]);
 
   const handleToggleTodo = useCallback(
     async (id: number) => {
@@ -271,6 +305,9 @@ export default function DashboardPage() {
     setIsChatLoading(true);
 
     try {
+      // NOTE: sendMessage() signature below still matches the CURRENT lib/api.ts.
+      // projectType is not yet passed through — lib/api.ts needs its own update
+      // to accept and forward it before this actually reaches the backend.
       const data = await sendMessage(
         videoInfo?.video_id ?? "",
         message,
@@ -361,7 +398,10 @@ export default function DashboardPage() {
         </main>
 
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
+          <ProjectTypeSelector activeType={projectType} onSelect={setProjectType} />
+          {(projectType === "single_release" || projectType === "album_release") && (
+            <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
+          )}
           <AIChatbot
             messages={chatMessages}
             onSendMessage={handleSendMessage}
@@ -401,6 +441,7 @@ export default function DashboardPage() {
           setEvents([]);
           setTodos([]);
           setSkippedSong(false);
+          setProjectType(null);
           setChatMessages([
             { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh, or skip to plan without one." },
           ]);
