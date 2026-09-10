@@ -380,7 +380,7 @@ export default function DashboardPage() {
 
         {/* Right Sidebar */}
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <UploadPanel onVideoLoaded={handleVideoLoaded} sessionId={sessionId} />
+          <UploadPanel onVideoLoaded={handleVideoLoaded} sessionId={sessionId} onSkip={() => {}} />
           <AIChatbot
             messages={chatMessages}
             onSendMessage={handleSendMessage}
