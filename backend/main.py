@@ -533,7 +533,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     try:
-            result = await run_agent(
+        result = await run_agent(
             agent=agent_state["agent"],
             message=request.message,
             session_id=request.session_id,
