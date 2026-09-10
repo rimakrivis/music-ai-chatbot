@@ -23,7 +23,7 @@ const PROJECT_TYPES: { id: ProjectType; label: string; emoji: string }[] = [
 export default function ProjectTypeSelector({ activeType, onSelect }: ProjectTypeSelectorProps) {
   return (
     <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
-      <p className="text-slate-600 text-sm font-medium mb-3">What are you planning?</p>
+      <p className="text-slate-600 text-sm font-medium mb-3">TEST 123 What are you planning?</p>
       <div className="grid grid-cols-2 gap-2">
         {PROJECT_TYPES.map((pt) => (
           <button
