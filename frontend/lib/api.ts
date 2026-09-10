@@ -66,9 +66,10 @@ export async function sendMessage(
   session_id: string,
   video_title: string,
   video_channel: string = "",
-  audio_features?: Record<string, unknown>
+  audio_features?: Record<string, unknown>,
+  projectType?: string | null
 ): Promise<ChatResponse> {
-  console.log("[api] sendMessage →", { video_id, message, session_id });
+  console.log("[api] sendMessage →", { video_id, message, session_id, projectType });
   if (audio_features) {
     console.log("[api] sendMessage — audio_features included:", audio_features);
   }
@@ -82,6 +83,7 @@ export async function sendMessage(
       video_title,
       video_channel,
       audio_features: audio_features ?? null,  // ← was missing before
+      project_type: projectType ?? null,
     }),
   });
   if (!res.ok) {

@@ -86,6 +86,7 @@ class ChatRequest(BaseModel):
     video_title: str = ""
     video_channel: str = ""
     audio_features: dict | None = None   # optional — passed to agent for richer context
+    project_type: str | None = None      # NEW — which project type the frontend selector is on
 
 
 class AnalyzeLyricsRequest(BaseModel):
@@ -520,6 +521,7 @@ async def chat(request: ChatRequest):
     """
     print(f"\n📥 [/chat] Session: {request.session_id} | Video: {request.video_id}")
     print(f"   Message: '{request.message}'")
+    print(f"   project_type: {request.project_type}")
 
     if "agent" not in agent_state:
         raise HTTPException(
@@ -531,7 +533,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
     try:
-        result = await run_agent(
+            result = await run_agent(
             agent=agent_state["agent"],
             message=request.message,
             session_id=request.session_id,
@@ -539,6 +541,7 @@ async def chat(request: ChatRequest):
             video_title=request.video_title,
             video_channel=request.video_channel,
             genre_data=request.audio_features,
+            project_type=request.project_type,
         )
 
         tasks = await extract_tasks_from_response(result["response"])
