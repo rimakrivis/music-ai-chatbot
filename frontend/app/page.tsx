@@ -305,8 +305,9 @@ export default function DashboardPage() {
     setIsChatLoading(true);
 
     try {
-      // projectType is now threaded through to lib/api.ts's sendMessage(),
-      // which forwards it to the backend as `project_type`.
+      // projectType and bandId are now threaded through to lib/api.ts's
+      // sendMessage(), which forwards them to the backend as
+      // `project_type` / `band_id`.
       const data = await sendMessage(
         videoInfo?.video_id ?? "",
         message,
@@ -315,6 +316,7 @@ export default function DashboardPage() {
         videoInfo?.channel ?? "",
         audioFeatures ?? undefined,
         projectType,
+        bandId,
       );
 
       try {

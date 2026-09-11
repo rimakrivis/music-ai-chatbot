@@ -67,9 +67,10 @@ export async function sendMessage(
   video_title: string,
   video_channel: string = "",
   audio_features?: Record<string, unknown>,
-  projectType?: string | null
+  projectType?: string | null,
+  band_id?: string | null
 ): Promise<ChatResponse> {
-  console.log("[api] sendMessage →", { video_id, message, session_id, projectType });
+  console.log("[api] sendMessage →", { video_id, message, session_id, projectType, band_id });
   if (audio_features) {
     console.log("[api] sendMessage — audio_features included:", audio_features);
   }
@@ -84,6 +85,7 @@ export async function sendMessage(
       video_channel,
       audio_features: audio_features ?? null,  // ← was missing before
       project_type: projectType ?? null,
+      band_id: band_id ?? null,  // ← NEW: closes the band_id migration gap
     }),
   });
   if (!res.ok) {
