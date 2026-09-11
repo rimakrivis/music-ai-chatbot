@@ -68,9 +68,10 @@ export async function sendMessage(
   video_channel: string = "",
   audio_features?: Record<string, unknown>,
   projectType?: string | null,
-  band_id?: string | null
+  band_id?: string | null,
+  project_id?: number | null
 ): Promise<ChatResponse> {
-  console.log("[api] sendMessage →", { video_id, message, session_id, projectType, band_id });
+  console.log("[api] sendMessage →", { video_id, message, session_id, projectType, band_id, project_id });
   if (audio_features) {
     console.log("[api] sendMessage — audio_features included:", audio_features);
   }
@@ -85,7 +86,8 @@ export async function sendMessage(
       video_channel,
       audio_features: audio_features ?? null,  // ← was missing before
       project_type: projectType ?? null,
-      band_id: band_id ?? null,  // ← NEW: closes the band_id migration gap
+      band_id: band_id ?? null,
+      project_id: project_id ?? null,  // ← NEW: specific project instance for memory isolation
     }),
   });
   if (!res.ok) {
@@ -96,6 +98,49 @@ export async function sendMessage(
   const data = await res.json();
   console.log("[api] sendMessage ✓", data);
   return data;
+}
+
+export interface Project {
+  id: number;
+  band_id: string;
+  project_type: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export async function createProject(band_id: string, project_type: string): Promise<Project> {
+  console.log("[api] createProject →", { band_id, project_type });
+  const res = await fetch(`${API_URL}/projects`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ band_id, project_type }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("[api] createProject failed:", err);
+    throw new Error(`Create project failed: ${res.status} — ${err}`);
+  }
+  const data = await res.json();
+  console.log("[api] createProject ✓", data.project);
+  return data.project;
+}
+
+export async function updateProjectDetails(
+  project_id: number,
+  details: Record<string, unknown>
+): Promise<void> {
+  console.log("[api] updateProjectDetails →", { project_id, details });
+  const res = await fetch(`${API_URL}/projects/${project_id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ details }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("[api] updateProjectDetails failed:", err);
+    throw new Error(`Update project details failed: ${res.status} — ${err}`);
+  }
+  console.log("[api] updateProjectDetails ✓");
 }
 
 export async function getTranscript(video_id: string): Promise<TranscriptResponse> {

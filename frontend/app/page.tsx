@@ -7,11 +7,12 @@ import ProgressBar from "@/components/dashboard/ProgressBar";
 import DailyFeed from "@/components/dashboard/DailyFeed";
 import UploadPanel from "@/components/dashboard/UploadPanel";
 import ProjectTypeSelector, { ProjectType } from "@/components/dashboard/ProjectTypeSelector";
+import ConcertDetailsCapture from "@/components/dashboard/ConcertDetailsCapture";
 import AIChatbot from "@/components/dashboard/AIChatbot";
 import EventDrawer from "@/components/dashboard/EventDrawer";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
-import { sendMessage, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
+import { sendMessage, createProject, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
 
 export default function DashboardPage() {
   const [sessionId, setSessionId] = useState<string>("");
@@ -54,6 +55,7 @@ export default function DashboardPage() {
   const [audioFeatures, setAudioFeatures] = useState<Record<string, unknown> | null>(null);
   const [skippedSong, setSkippedSong] = useState(false);
   const [projectType, setProjectType] = useState<ProjectType | null>(null);
+  const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -188,7 +190,16 @@ export default function DashboardPage() {
     }
     setEvents([]);
     setTodos([]);
-  }, [projectType]);
+
+    // Concert is the only project type with its own project row so far —
+    // Social Campaign / Other follow the same pattern once their content is written.
+    setCurrentProjectId(null);
+    if (projectType === "concert" && bandId) {
+      createProject(bandId, "concert")
+        .then((project) => setCurrentProjectId(project.id))
+        .catch((err) => console.error("[page] Failed to create concert project", err));
+    }
+  }, [projectType, bandId]);
 
   const handleToggleTodo = useCallback(
     async (id: number) => {
@@ -305,9 +316,9 @@ export default function DashboardPage() {
     setIsChatLoading(true);
 
     try {
-      // projectType and bandId are now threaded through to lib/api.ts's
-      // sendMessage(), which forwards them to the backend as
-      // `project_type` / `band_id`.
+      // projectType, bandId, and currentProjectId are now threaded through to
+      // lib/api.ts's sendMessage(), which forwards them to the backend as
+      // `project_type` / `band_id` / `project_id`.
       const data = await sendMessage(
         videoInfo?.video_id ?? "",
         message,
@@ -317,6 +328,7 @@ export default function DashboardPage() {
         audioFeatures ?? undefined,
         projectType,
         bandId,
+        currentProjectId,
       );
 
       try {
@@ -403,6 +415,9 @@ export default function DashboardPage() {
           <ProjectTypeSelector activeType={projectType} onSelect={setProjectType} />
           {(projectType === "single_release" || projectType === "album_release") && (
             <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
+          )}
+          {projectType === "concert" && currentProjectId && (
+            <ConcertDetailsCapture projectId={currentProjectId} />
           )}
           <AIChatbot
             messages={chatMessages}
