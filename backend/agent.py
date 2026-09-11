@@ -299,7 +299,11 @@ async def run_agent(
         project_type,
     )
 
-    config = {"configurable": {"thread_id": session_id}}
+        # Separate memory thread per project_type — prevents Concert and Single Release
+    # conversations (same session_id) from sharing/mixing agent context.
+    thread_id = f"{session_id}_{project_type}" if project_type else session_id
+    print(f"   🧵 thread_id: {thread_id}")
+    config = {"configurable": {"thread_id": thread_id}}
 
     existing = checkpointer.get(config)
     is_first_turn = (
