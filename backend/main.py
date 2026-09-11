@@ -10,6 +10,11 @@ Endpoints:
   POST /event-chat                   — creative assistant for a specific calendar task
   GET  /transcript/{video_id}        — read back transcript from Pinecone
 
+  POST   /projects                   — create a project (a specific concert, release, etc.)
+  GET    /projects/{project_id}      — read one project by id
+  GET    /projects/latest/{band_id}  — read the most recent project for a band (optional ?project_type=)
+  PATCH  /projects/{project_id}      — merge fields into a project's details jsonb
+
   POST   /calendar/events
   GET    /calendar/events/{session_id}
   PATCH  /calendar/events/{event_id}
@@ -48,6 +53,10 @@ import httpx as _httpx
 from database import (
     create_tables,
     get_or_create_band,
+    create_project,
+    get_project,
+    get_latest_project_for_band,
+    update_project_details,
     save_calendar_events,
     get_calendar_events,
     update_calendar_event,
@@ -86,7 +95,21 @@ class ChatRequest(BaseModel):
     video_title: str = ""
     video_channel: str = ""
     audio_features: dict | None = None   # optional — passed to agent for richer context
-    project_type: str | None = None      # NEW — which project type the frontend selector is on
+    project_type: str | None = None      # which project type the frontend selector is on
+    band_id: str | None = None           # NEW — closes the band_id migration gap; optional for
+                                          # now so old frontend builds don't break mid-rollout
+    project_id: int | None = None        # NEW — specific project instance (e.g. one concert out
+                                          # of several); optional until Step 2's Concert UI creates
+                                          # projects and starts passing this through
+
+
+class CreateProjectRequest(BaseModel):
+    band_id: str
+    project_type: str
+
+
+class UpdateProjectDetailsRequest(BaseModel):
+    details: dict
 
 
 class AnalyzeLyricsRequest(BaseModel):
@@ -213,6 +236,60 @@ async def get_band(request: BandRequest):
         return {"band_id": band_id, "status": "ok"}
     except Exception as e:
         print(f"❌ POST /band: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# /projects — one row per project instance (a specific concert, release, etc.)
+# ---------------------------------------------------------------------------
+
+@app.post("/projects")
+async def create_project_endpoint(request: CreateProjectRequest):
+    print(f"\n📥 [POST /projects] band_id: {request.band_id} | project_type: {request.project_type}")
+    try:
+        project = await create_project(request.band_id, request.project_type)
+        return {"project": project, "status": "ok"}
+    except Exception as e:
+        print(f"❌ POST /projects: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/projects/{project_id}")
+async def read_project(project_id: int):
+    try:
+        project = await get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail=f"No project with id {project_id}")
+        return {"project": project}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ GET /projects/{project_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/projects/latest/{band_id}")
+async def read_latest_project(band_id: str, project_type: str | None = None):
+    """Fetch the most recently created project for a band — used before the
+    frontend tracks a specific project_id of its own. Optional ?project_type=
+    query param filters to just that type (e.g. 'concert')."""
+    try:
+        project = await get_latest_project_for_band(band_id, project_type)
+        return {"project": project}
+    except Exception as e:
+        print(f"❌ GET /projects/latest/{band_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/projects/{project_id}")
+async def edit_project_details(project_id: int, request: UpdateProjectDetailsRequest):
+    """Merge new fields into a project's details jsonb (e.g. Concert's
+    ticket_owner/is_paid). Existing fields not included in this call are kept."""
+    try:
+        updated = await update_project_details(project_id, request.details)
+        return {"updated": updated, "status": "ok"}
+    except Exception as e:
+        print(f"❌ PATCH /projects/{project_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -521,7 +598,7 @@ async def chat(request: ChatRequest):
     """
     print(f"\n📥 [/chat] Session: {request.session_id} | Video: {request.video_id}")
     print(f"   Message: '{request.message}'")
-    print(f"   project_type: {request.project_type}")
+    print(f"   project_type: {request.project_type} | band_id: {request.band_id} | project_id: {request.project_id}")
 
     if "agent" not in agent_state:
         raise HTTPException(
@@ -542,6 +619,8 @@ async def chat(request: ChatRequest):
             video_channel=request.video_channel,
             genre_data=request.audio_features,
             project_type=request.project_type,
+            band_id=request.band_id,
+            project_id=request.project_id,
         )
 
         tasks = await extract_tasks_from_response(result["response"])

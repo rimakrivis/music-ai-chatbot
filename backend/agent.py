@@ -277,9 +277,12 @@ async def run_agent(
     video_title: str = "",
     video_channel: str = "",
     genre_data: dict = None,       # ← renamed from audio_features
-    project_type: str = None,      # ← NEW: passed through from /chat request
+    project_type: str = None,      # ← passed through from /chat request
+    band_id: str = None,           # ← NEW: closes the band_id migration gap
+    project_id: int = None,       # ← NEW: specific project instance (e.g. one concert of several)
 ) -> dict:
     print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id} | project_type: {project_type}")
+    print(f"   band_id: {band_id} | project_id: {project_id}")
     print(f"   Message: '{message}'")
 
     if genre_data and genre_data.get("top_genres"):
@@ -299,9 +302,20 @@ async def run_agent(
         project_type,
     )
 
-        # Separate memory thread per project_type — prevents Concert and Single Release
-    # conversations (same session_id) from sharing/mixing agent context.
-    thread_id = f"{session_id}_{project_type}" if project_type else session_id
+    # Memory isolation, most-specific-wins:
+    #   1. project_id present  → one thread per SPECIFIC project instance
+    #      (e.g. Vilnius concert vs Kaunas concert never mix, even though
+    #      both are project_type="concert"). This is the real fix.
+    #   2. no project_id yet   → fall back to the old per-project_type split
+    #      (Concert vs Release don't mix, but same-type projects still would).
+    #      This keeps things working before Step 2's Concert UI exists.
+    #   3. no project_type either → single thread per session_id, as before.
+    if project_id is not None:
+        thread_id = f"project_{project_id}"
+    elif project_type:
+        thread_id = f"{session_id}_{project_type}"
+    else:
+        thread_id = session_id
     print(f"   🧵 thread_id: {thread_id}")
     config = {"configurable": {"thread_id": thread_id}}
 

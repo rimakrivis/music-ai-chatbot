@@ -81,13 +81,109 @@ async def get_or_create_band(owner_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Projects (Release / Concert / Social Campaign / Other)
+# ---------------------------------------------------------------------------
+
+async def create_project(band_id: str, project_type: str) -> dict:
+    """Create a new project row for a band. details starts empty ({}) —
+    filled in later by update_project_details (e.g. Concert's
+    ticket_owner/is_paid fields). Returns the full new row."""
+    if not band_id or not project_type:
+        raise ValueError("❌ create_project called with empty band_id or project_type")
+
+    try:
+        supabase = get_supabase()
+        insert_result = (
+            supabase.table("projects")
+            .insert({"band_id": band_id, "project_type": project_type, "details": {}})
+            .execute()
+        )
+        if not insert_result.data:
+            raise RuntimeError("❌ Project insert returned no data")
+
+        project = insert_result.data[0]
+        print(f"🗂️  Created project {project['id']} ({project_type}) for band {band_id}")
+        return project
+    except Exception as e:
+        print(f"❌ Error in create_project: {e}")
+        raise
+
+
+async def get_project(project_id: int) -> dict | None:
+    """Fetch a single project row by id. Returns None if not found."""
+    try:
+        supabase = get_supabase()
+        result = (
+            supabase.table("projects")
+            .select("*")
+            .eq("id", project_id)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            print(f"🗂️  No project found with id {project_id}")
+            return None
+        return result.data[0]
+    except Exception as e:
+        print(f"❌ Error in get_project: {e}")
+        raise
+
+
+async def get_latest_project_for_band(band_id: str, project_type: str | None = None) -> dict | None:
+    """Fetch the most recently created project for a band, optionally
+    filtered by project_type. Used when the frontend doesn't yet track a
+    specific project_id and just needs 'the current one'."""
+    try:
+        supabase = get_supabase()
+        query = supabase.table("projects").select("*").eq("band_id", band_id)
+        if project_type:
+            query = query.eq("project_type", project_type)
+        result = query.order("created_at", desc=True).limit(1).execute()
+
+        if not result.data:
+            print(f"🗂️  No project found for band {band_id} (project_type={project_type})")
+            return None
+        return result.data[0]
+    except Exception as e:
+        print(f"❌ Error in get_latest_project_for_band: {e}")
+        raise
+
+
+async def update_project_details(project_id: int, details: dict) -> bool:
+    """Merge new fields into a project's details jsonb (e.g. Concert's
+    ticket_owner/is_paid). Merges rather than overwrites, so partial
+    updates don't wipe out fields set earlier."""
+    try:
+        supabase = get_supabase()
+        existing = await get_project(project_id)
+        if existing is None:
+            raise ValueError(f"❌ update_project_details: no project with id {project_id}")
+
+        merged = {**(existing.get("details") or {}), **details}
+        supabase.table("projects").update({"details": merged}).eq("id", project_id).execute()
+        print(f"✅ Updated project {project_id} details: {merged}")
+        return True
+    except Exception as e:
+        print(f"❌ Error updating project details: {e}")
+        raise
+
+
+# ---------------------------------------------------------------------------
 # Calendar Events
 # ---------------------------------------------------------------------------
 
-async def save_calendar_events(band_id: str, video_id: str | None, events: list) -> int:
+async def save_calendar_events(
+    band_id: str,
+    video_id: str | None,
+    events: list,
+    project_id: int | None = None,
+) -> int:
     """Insert multiple calendar events for a band. video_id is optional —
-    only present when the event is tied to a specific uploaded song."""
-    print(f"📅 Saving {len(events)} calendar events for band {band_id}")
+    only present when the event is tied to a specific uploaded song.
+    project_id is optional too — tags which project (Release/Concert/etc.)
+    created this event, without changing the shared-calendar behavior:
+    all events for a band still show up together regardless of project_id."""
+    print(f"📅 Saving {len(events)} calendar events for band {band_id} (project_id={project_id})")
 
     if not events:
         return 0
@@ -98,6 +194,7 @@ async def save_calendar_events(band_id: str, video_id: str | None, events: list)
             {
                 "band_id": band_id,
                 "video_id": video_id,
+                "project_id": project_id,
                 "title": event["title"],
                 "date": event["date"],
                 "type": event.get("type", "general"),
@@ -176,10 +273,18 @@ async def delete_calendar_event(event_id: int) -> bool:
 # Todos
 # ---------------------------------------------------------------------------
 
-async def save_todos(band_id: str, video_id: str | None, items: list) -> int:
+async def save_todos(
+    band_id: str,
+    video_id: str | None,
+    items: list,
+    project_id: int | None = None,
+) -> int:
     """Insert multiple todo items for a band. video_id is optional —
-    only present when the todo is tied to a specific uploaded song."""
-    print(f"✅ Saving {len(items)} todos for band {band_id}")
+    only present when the todo is tied to a specific uploaded song.
+    project_id is optional too — tags which project (Release/Concert/etc.)
+    created this todo, without changing the shared-calendar behavior:
+    all todos for a band still show up together regardless of project_id."""
+    print(f"✅ Saving {len(items)} todos for band {band_id} (project_id={project_id})")
 
     if not items:
         return 0
@@ -190,6 +295,7 @@ async def save_todos(band_id: str, video_id: str | None, items: list) -> int:
             {
                 "band_id": band_id,
                 "video_id": video_id,
+                "project_id": project_id,
                 "title": item["title"],
                 "due_date": item.get("due_date"),
             }
