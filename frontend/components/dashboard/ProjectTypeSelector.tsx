@@ -61,7 +61,9 @@ function IconOther({ active }: { active: boolean }) {
   );
 }
 
-const PROJECT_TYPES: { id: ProjectType; label: string; Icon: typeof IconSingle }[] = [
+// Exported so Sidebar.tsx can render these same icons/labels as nested nav
+// items under the "Projects" accordion, without duplicating the SVGs.
+export const PROJECT_TYPES: { id: ProjectType; label: string; Icon: typeof IconSingle }[] = [
   { id: "single_release", label: "Single Release", Icon: IconSingle },
   { id: "album_release", label: "Album Release", Icon: IconAlbum },
   { id: "concert", label: "Concert", Icon: IconConcert },

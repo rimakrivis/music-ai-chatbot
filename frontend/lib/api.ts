@@ -232,3 +232,46 @@ export async function rescheduleCalendarEvent(eventId: number, newDate: string):
   });
   if (!res.ok) throw new Error(`Reschedule failed: ${res.status}`);
 }
+
+// Manual event creation — same POST /calendar/events endpoint the agent's
+// task-confirmation flow already uses, just called directly with a single
+// event instead of an agent-extracted batch.
+export async function createCalendarEventManual(
+  bandId: string,
+  event: { title: string; date: string; type: string },
+  videoId?: string | null,
+  projectId?: number | null
+): Promise<void> {
+  const res = await fetch(`${API_URL}/calendar/events`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      band_id: bandId,
+      video_id: videoId ?? null,
+      project_id: projectId ?? null,
+      events: [event],
+    }),
+  });
+  if (!res.ok) throw new Error(`Create event failed: ${res.status}`);
+}
+
+export async function getBandProfile(
+  bandId: string
+): Promise<{ profile: import("./types").BandProfile | Record<string, never>; status: import("./types").BandProfileStatus }> {
+  const res = await fetch(`${API_URL}/band/${bandId}/profile`);
+  if (!res.ok) throw new Error(`Get band profile failed: ${res.status}`);
+  return res.json();
+}
+
+export async function updateBandProfile(
+  bandId: string,
+  profile: import("./types").BandProfile,
+  status: "draft" | "complete"
+): Promise<void> {
+  const res = await fetch(`${API_URL}/band/${bandId}/profile`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profile, status }),
+  });
+  if (!res.ok) throw new Error(`Save band profile failed: ${res.status}`);
+}

@@ -66,6 +66,8 @@ from database import (
     update_todo,
     delete_todo,
     delete_band_data,
+    get_band_profile,
+    update_band_profile,
 )
 from config import GROK_MODEL, validate_config, IS_PRODUCTION, ENVIRONMENT, OPENAI_API_KEY, XAI_API_KEY,  GROK_MODEL, GROK_TEMPERATURE
 from pipeline import (
@@ -86,6 +88,11 @@ class AnalyzeRequest(BaseModel):
 
 class BandRequest(BaseModel):
     owner_id: str
+
+
+class BandProfileRequest(BaseModel):
+    profile: dict
+    status: str = "draft"
 
 
 class ChatRequest(BaseModel):
@@ -236,6 +243,32 @@ async def get_band(request: BandRequest):
         return {"band_id": band_id, "status": "ok"}
     except Exception as e:
         print(f"❌ POST /band: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/band/{band_id}/profile")
+async def read_band_profile(band_id: str):
+    """Returns the saved questionnaire + its completion status. Used both to
+    resume an in-progress wizard (status='draft') and to inject full profile
+    context into the agent's system prompt when planning for this band."""
+    try:
+        result = await get_band_profile(band_id)
+        return result
+    except Exception as e:
+        print(f"❌ GET /band/{{band_id}}/profile: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.patch("/band/{band_id}/profile")
+async def write_band_profile(band_id: str, request: BandProfileRequest):
+    """Saves the full questionnaire state. Called on every step transition
+    (status='draft') for save-and-continue, and once more on final submit
+    (status='complete')."""
+    try:
+        updated = await update_band_profile(band_id, request.profile, request.status)
+        return {"band": updated, "status": "ok"}
+    except Exception as e:
+        print(f"❌ PATCH /band/{{band_id}}/profile: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

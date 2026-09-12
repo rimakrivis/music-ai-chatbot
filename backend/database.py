@@ -80,6 +80,69 @@ async def get_or_create_band(owner_id: str) -> str:
         raise
 
 
+async def get_band_profile(band_id: str) -> dict:
+    """Fetch the artist questionnaire profile + its completion status for a
+    band. Returns {"profile": {}, "status": "empty"} if nothing saved yet —
+    never raises just because the profile is blank."""
+    if not band_id:
+        raise ValueError("❌ get_band_profile called with empty band_id")
+
+    try:
+        supabase = get_supabase()
+        result = (
+            supabase.table("bands")
+            .select("profile, profile_status")
+            .eq("id", band_id)
+            .limit(1)
+            .execute()
+        )
+        if not result.data:
+            raise RuntimeError(f"❌ No band found with id {band_id}")
+
+        row = result.data[0]
+        return {
+            "profile": row.get("profile") or {},
+            "status": row.get("profile_status") or "empty",
+        }
+    except Exception as e:
+        print(f"❌ Error in get_band_profile: {e}")
+        raise
+
+
+async def update_band_profile(band_id: str, profile: dict, status: str) -> dict:
+    """Save the questionnaire profile (full object, same shape every time —
+    the frontend sends the whole form state on every step transition, not a
+    diff). status is 'draft' while the wizard is in progress, 'complete'
+    once every required step has been filled."""
+    if not band_id:
+        raise ValueError("❌ update_band_profile called with empty band_id")
+    if status not in ("draft", "complete"):
+        raise ValueError(f"❌ Invalid profile status: {status}")
+
+    try:
+        supabase = get_supabase()
+        result = (
+            supabase.table("bands")
+            .update(
+                {
+                    "profile": profile,
+                    "profile_status": status,
+                    "profile_updated_at": "now()",
+                }
+            )
+            .eq("id", band_id)
+            .execute()
+        )
+        if not result.data:
+            raise RuntimeError(f"❌ Band profile update returned no data for {band_id}")
+
+        print(f"📋 Saved band profile for {band_id} (status={status})")
+        return result.data[0]
+    except Exception as e:
+        print(f"❌ Error in update_band_profile: {e}")
+        raise
+
+
 # ---------------------------------------------------------------------------
 # Projects (Release / Concert / Social Campaign / Other)
 # ---------------------------------------------------------------------------

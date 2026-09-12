@@ -1,16 +1,17 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import MiniCalendar from "@/components/dashboard/MiniCalendar";
-import TodoListPanel from "@/components/dashboard/TodoListPanel";
-import ProgressBar from "@/components/dashboard/ProgressBar";
 import DailyFeed from "@/components/dashboard/DailyFeed";
 import UploadPanel from "@/components/dashboard/UploadPanel";
-import ProjectTypeSelector, { ProjectType } from "@/components/dashboard/ProjectTypeSelector";
+import { ProjectType } from "@/components/dashboard/ProjectTypeSelector";
 import ConcertDetailsCapture from "@/components/dashboard/ConcertDetailsCapture";
 import AIChatbot from "@/components/dashboard/AIChatbot";
 import EventDrawer from "@/components/dashboard/EventDrawer";
 import TaskConfirmationCard from "@/components/TaskConfirmationCard";
+import Sidebar from "@/components/dashboard/Sidebar";
+import TodoDrawer from "@/components/dashboard/TodoDrawer";
+import AddToCalendarModal from "@/components/dashboard/AddToCalendarModal";
+import BandProfileForm from "@/components/dashboard/BandProfileForm";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
 import { sendMessage, createProject, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
 
@@ -66,6 +67,12 @@ export default function DashboardPage() {
     },
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
+
+  // New sidebar-driven overlays — each independent, none touch the
+  // calendar-event-click -> EventDrawer flow, which keeps using selectedEvent.
+  const [todoDrawerOpen, setTodoDrawerOpen] = useState(false);
+  const [bandProfileOpen, setBandProfileOpen] = useState(false);
+  const [addEventModalOpen, setAddEventModalOpen] = useState(false);
 
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -289,6 +296,17 @@ export default function DashboardPage() {
     }
   }, []);
 
+  const handleReset = useCallback(async () => {
+    await fetch(`${API}/band/${bandId}`, { method: "DELETE" });
+    setEvents([]);
+    setTodos([]);
+    setSkippedSong(false);
+    setProjectType(null);
+    setChatMessages([
+      { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh, or skip to plan without one." },
+    ]);
+  }, [API, bandId]);
+
   function handleTaskConfirm(msgIndex: number) {
     setChatMessages((prev) =>
       prev.map((m, i) => (i === msgIndex ? { ...m, tasksConfirmed: true } : m))
@@ -383,17 +401,20 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-[#f7f5f2] p-6">
-      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[320px_1fr_340px] gap-6 h-[calc(100vh-48px)]">
+      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[auto_1fr_340px] gap-6 h-[calc(100vh-48px)]">
 
-      <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-        <MiniCalendar events={events} onEventClick={handleEventClick} />
-        <ProgressBar progress={progressPercent} />
-        <TodoListPanel
+        <Sidebar
+          events={events}
+          onEventClick={handleEventClick}
+          progress={progressPercent}
           todos={todos}
-          onToggle={handleToggleTodo}
-          onTitleClick={handleTodoTitleClick}
+          onOpenTodoDrawer={() => setTodoDrawerOpen(true)}
+          onOpenBandProfile={() => setBandProfileOpen(true)}
+          activeProjectType={projectType}
+          onSelectProjectType={setProjectType}
+          onOpenAddEventModal={() => setAddEventModalOpen(true)}
+          onReset={handleReset}
         />
-      </aside> 
 
         <main className="overflow-y-auto pr-2 -mr-2">
           {events.length === 0 ? (
@@ -412,7 +433,6 @@ export default function DashboardPage() {
         </main>
 
         <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          <ProjectTypeSelector activeType={projectType} onSelect={setProjectType} />
           {(projectType === "single_release" || projectType === "album_release") && (
             <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
           )}
@@ -440,6 +460,8 @@ export default function DashboardPage() {
         </aside>
       </div>
 
+      {/* Calendar-event click still opens EventDrawer exactly as before —
+          untouched by the sidebar refactor. */}
       <EventDrawer
         event={selectedEvent}
         onClose={handleCloseDrawer}
@@ -452,22 +474,31 @@ export default function DashboardPage() {
         audioFeatures={audioFeatures}
       />
 
-      <button
-        onClick={async () => {
-          await fetch(`${API}/band/${bandId}`, { method: "DELETE" });
-          setEvents([]);
-          setTodos([]);
-          setSkippedSong(false);
-          setProjectType(null);
-          setChatMessages([
-            { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh, or skip to plan without one." },
-          ]);
+      <TodoDrawer
+        open={todoDrawerOpen}
+        onClose={() => setTodoDrawerOpen(false)}
+        todos={todos}
+        onToggle={handleToggleTodo}
+        onTitleClick={(todo) => {
+          setTodoDrawerOpen(false);
+          handleTodoTitleClick(todo);
         }}
-        className="fixed bottom-4 left-4 text-xs text-slate-300 hover:text-rose-400 transition-colors"
-        title="Clear band data"
-      >
-        ↺ reset
-      </button>
+      />
+
+      <BandProfileForm
+        open={bandProfileOpen}
+        onClose={() => setBandProfileOpen(false)}
+        bandId={bandId}
+      />
+
+      <AddToCalendarModal
+        open={addEventModalOpen}
+        onClose={() => setAddEventModalOpen(false)}
+        bandId={bandId}
+        videoId={videoInfo?.video_id}
+        projectId={currentProjectId}
+        onSaved={loadFromSupabase}
+      />
     </div>
   );
 }
