@@ -1,5 +1,7 @@
 # backend/agent.py
+
 import json
+
 from datetime import date as _date
 
 from langgraph.prebuilt import create_react_agent
@@ -13,7 +15,9 @@ from tools.analyze_marketing import analyze_marketing_potential
 from tools.get_artist_info import get_artist_info
 from tools.find_release_timing import find_release_timing
 from tools.search_marketing_knowledge import search_marketing_knowledge
+
 from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
+from database import get_project
 
 # ---------------------------------------------------------------------------
 # Model
@@ -25,6 +29,7 @@ llm = ChatOpenAI(
     base_url="https://api.x.ai/v1",
     reasoning_effort=GROK_REASONING_EFFORT,
 )
+
 print(f"[agent] LLM: {GROK_MODEL} | reasoning: {GROK_REASONING_EFFORT} | endpoint: xAI")
 
 TOOLS = [
@@ -38,50 +43,89 @@ TOOLS = [
 
 checkpointer = InMemorySaver()
 
+
 def _trim_messages(messages: list, keep_last_n_human_turns: int = 6) -> list:
     if not messages:
         return messages
+
     system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
     non_system = [m for m in messages if not isinstance(m, SystemMessage)]
+
     human_indices = [i for i, m in enumerate(non_system) if isinstance(m, HumanMessage)]
     if len(human_indices) <= keep_last_n_human_turns:
         return messages
+
     cutoff = human_indices[-keep_last_n_human_turns]
     trimmed = non_system[cutoff:]
-    print(f"   ✂️  Trimmed history: {len(non_system)} → {len(trimmed)} messages")
+    print(f"   ✂️ Trimmed history: {len(non_system)} → {len(trimmed)} messages")
     return system_msgs + trimmed
 
 
 # ---------------------------------------------------------------------------
-# STATIC_SYSTEM_PROMPT — defined above _build_system_prompt now, since the
-# minimal project_type guard below returns it directly for non-release types.
+# STATIC_SYSTEM_PROMPT — base identity, shared by every project type.
+# Release types build a full checklist prompt on top of it.
+# Non-release types get the generic skeleton below instead.
 # ---------------------------------------------------------------------------
 STATIC_SYSTEM_PROMPT = """You are DropOperator — a music release planner.
 Use search_marketing_knowledge before every plan and every how-to question.
 Always respond in the same language the user writes in."""
 
-
-# ---------------------------------------------------------------------------
-# System prompt builder — now accepts genre_data dict instead of audio_features
-# ---------------------------------------------------------------------------
 RELEASE_PROJECT_TYPES = {"single_release", "album_release"}
 
+
+# ---------------------------------------------------------------------------
+# Generic non-release project prompt — Concert / Social Campaign / Other.
+#
+# Structural only, on purpose (per standing rule — Rima writes the actual
+# strategy content in marketing_knowledge.md, not here). Same function
+# handles every non-release project type today and any new one added later:
+# no per-type branching, no hardcoded phase/strategy text.
+# ---------------------------------------------------------------------------
+def _build_non_release_prompt(project_type: str, project_details: dict = None) -> str:
+    print(f"   🟡 project_type='{project_type}' → generic non-release prompt")
+
+    if project_details:
+        details_lines = "\n".join(f"- {k}: {v}" for k, v in project_details.items())
+        details_block = f"PROJECT DETAILS (captured during setup):\n{details_lines}"
+    else:
+        details_block = (
+            "PROJECT DETAILS: none captured yet. Do not assume specifics "
+            "(e.g. paid/free, who's handling logistics) — ask the user if it "
+            "matters for the question at hand."
+        )
+
+    today = _date.today().isoformat()
+
+    return f"""{STATIC_SYSTEM_PROMPT}
+
+CURRENT PROJECT TYPE: {project_type}
+TODAY: {today}
+
+{details_block}
+
+TOOLS FOR THIS PROJECT TYPE:
+- search_marketing_knowledge → ALWAYS call this before giving any plan, strategy, or how-to answer for a "{project_type}" project. Never answer a strategy question from memory alone. If it returns nothing useful, say so plainly, then reason generally and flag that clearly.
+- find_release_timing → only when the user needs a release-style date calculation (e.g. a song or album tied to this project). For other kinds of timing questions, reason directly from TODAY above.
+- get_artist_info, extract_lyrics, analyze_marketing_potential, search_transcript → only call these if directly relevant to what's being asked. Don't call them speculatively just because a project is active.
+
+No embedded checklist or phase strategy exists yet for this project type in this system prompt — that content lives in the marketing knowledge base. Rely on search_marketing_knowledge rather than inventing a structure."""
+
+
+# ---------------------------------------------------------------------------
+# System prompt builder — release-type checklist prompt, or generic
+# non-release skeleton via _build_non_release_prompt above.
+# ---------------------------------------------------------------------------
 def _build_system_prompt(
     video_id: str,
     video_title: str = "",
     video_channel: str = "",
-    genre_data: dict = None,       # ← replaces audio_features_text / audio_features_json
-    project_type: str = None,      # ← NEW: "single_release" | "album_release" | "concert" | "social_campaign" | "other" | None
+    genre_data: dict = None,
+    project_type: str = None,
+    project_details: dict = None,   # ← NEW: raw `projects.details` jsonb, non-release types only
 ) -> str:
-    # ------------------------------------------------------------------
-    # MINIMAL GUARD (per Rima — no new concert/campaign prompt content
-    # written here on purpose; that's a separate task). This only stops
-    # the release checklist from firing on non-release project types by
-    # falling back to the existing generic STATIC_SYSTEM_PROMPT.
-    # ------------------------------------------------------------------
+
     if project_type and project_type not in RELEASE_PROJECT_TYPES:
-        print(f"   🟡 project_type='{project_type}' → generic prompt, skipping release checklist")
-        return STATIC_SYSTEM_PROMPT
+        return _build_non_release_prompt(project_type, project_details)
 
     video_context = f"video ID: {video_id}"
     if video_title:
@@ -96,14 +140,12 @@ def _build_system_prompt(
     if genre_data and genre_data.get("top_genres"):
         top_genres = genre_data["top_genres"]
 
-        # Primary genre line: "Electronic › House (87.3%)"
         primary = top_genres[0]
         primary_line = f"{primary['genre']}"
         if primary["subgenre"]:
             primary_line += f" › {primary['subgenre']}"
         primary_line += f" ({round(primary['confidence'] * 100, 1)}%)"
 
-        # Secondary genres as a compact comma-separated list
         secondary_parts = []
         for g in top_genres[1:]:
             label = g["genre"]
@@ -111,13 +153,12 @@ def _build_system_prompt(
                 label += f" › {g['subgenre']}"
             label += f" ({round(g['confidence'] * 100, 1)}%)"
             secondary_parts.append(label)
-
         secondary_line = ", ".join(secondary_parts) if secondary_parts else "—"
 
         genre_block = (
-            f"Primary genre:    {primary_line}\n"
-            f"Also detected:    {secondary_line}\n"
-            f"Source:           Essentia Discogs-EffNet (400-class model)\n"
+            f"Primary genre: {primary_line}\n"
+            f"Also detected: {secondary_line}\n"
+            f"Source: Essentia Discogs-EffNet (400-class model)\n"
             f"RAW JSON: {json.dumps({'top_genres': top_genres})}"
         )
     else:
@@ -133,6 +174,7 @@ GENRE & SOUND PROFILE (pre-detected by Essentia — do not re-analyze):
 {genre_block}
 
 TODAY: {today}
+
 DATE RULES: PRE-RELEASE tasks before release date | Spotify pitch min 7 days before (28 days recommended) — NEVER after release | Distributor upload type = deadline (min 4 days before) | POST-RELEASE tasks intentionally after release date | Release date appears once in checklist header only | If user says already submitted to distributor → skip "Upload to Distributor" and "Master Audio File Ready".
 
 PLAN MODE — triggered when user asks for a plan, strategy, or rollout:
@@ -147,7 +189,6 @@ PLAN MODE — triggered when user asks for a plan, strategy, or rollout:
 4. Output the checklist below. No prose before or after. Just the checklist.
 
 CHECKLIST FORMAT (exact structure, always):
-
 RELEASE PLAN: {video_title} — Release: [YYYY-MM-DD]
 
 PRE-RELEASE
@@ -184,15 +225,15 @@ FOLLOW-UP MODE — triggered by any message after the plan is shown:
 - If it is a how-to question → call search_marketing_knowledge first, then answer in plain text.
 - If it is a song analysis question → call search_transcript first, then analyze_marketing_potential.
 - If user asks to ADD tasks, MORE ideas, or EXTRA steps to the plan → output ONLY new checklist items in this exact format:
-  [ ] Task title — [YYYY-MM-DD] — type
-  No headers, no prose, no full plan repeat. Just the new lines.
+[ ] Task title — [YYYY-MM-DD] — type
+No headers, no prose, no full plan repeat. Just the new lines.
 - If user asks a general question → answer in plain text.
 - Never add fluff. Never repeat the plan.
 
 DELETE MODE — triggered when user asks to remove, delete, or cancel a task:
 - First confirm: "Are you sure you want to delete [task name]?"
 - Only after user confirms with yes/confirm/delete it → respond with this exact JSON block and nothing else:
-  {{"action": "delete", "task": "[exact task title]"}}
+{{"action": "delete", "task": "[exact task title]"}}
 - Never delete without explicit user confirmation.
 
 RESCHEDULE MODE — triggered when user asks to move or reschedule a task:
@@ -231,6 +272,7 @@ SPOTIFY PITCH GENERATION RULES — triggered when user asks to write a Spotify p
 5. Never write a pitch shorter than 3 paragraphs
 6. Never use vague phrases like "compelling sound" or "unique artist" — every claim must be specific
 7. Playlist targeting: suggest 3 specific playlist names, never include "New Music Friday" as primary target — it is too generic
+
 CONTEXT GATHERING — triggered before generating any content (pitch, social post, press release, radio email):
 Before writing, check if you have ALL required context. If any is missing → ask in ONE message, listing all missing items as numbered questions. Do not generate content until answered.
 8. Never use genre, artist comparisons, or playlist names from the knowledge base examples — they are for specificity calibration only. All sonic references must match THIS track's Essentia genre data.
@@ -253,7 +295,6 @@ Always respond in the same language the user writes in.
 # ---------------------------------------------------------------------------
 # Agent factory — unchanged
 # ---------------------------------------------------------------------------
-
 def create_music_agent():
     print("\n🤖 [agent] Creating music agent...")
     agent = create_react_agent(
@@ -267,7 +308,7 @@ def create_music_agent():
 
 
 # ---------------------------------------------------------------------------
-# Agent runner — audio_features param renamed to genre_data
+# Agent runner
 # ---------------------------------------------------------------------------
 async def run_agent(
     agent,
@@ -276,11 +317,12 @@ async def run_agent(
     video_id: str,
     video_title: str = "",
     video_channel: str = "",
-    genre_data: dict = None,       # ← renamed from audio_features
-    project_type: str = None,      # ← passed through from /chat request
-    band_id: str = None,           # ← NEW: closes the band_id migration gap
-    project_id: int = None,       # ← NEW: specific project instance (e.g. one concert of several)
+    genre_data: dict = None,
+    project_type: str = None,
+    band_id: str = None,
+    project_id: int = None,
 ) -> dict:
+
     print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id} | project_type: {project_type}")
     print(f"   band_id: {band_id} | project_id: {project_id}")
     print(f"   Message: '{message}'")
@@ -294,38 +336,56 @@ async def run_agent(
     else:
         print("   ℹ️ No genre data available for this track")
 
-    context_block = _build_system_prompt(
-        video_id,
-        video_title,
-        video_channel,
-        genre_data,
-        project_type,
-    )
-
-    # Memory isolation, most-specific-wins:
-    #   1. project_id present  → one thread per SPECIFIC project instance
-    #      (e.g. Vilnius concert vs Kaunas concert never mix, even though
-    #      both are project_type="concert"). This is the real fix.
-    #   2. no project_id yet   → fall back to the old per-project_type split
-    #      (Concert vs Release don't mix, but same-type projects still would).
-    #      This keeps things working before Step 2's Concert UI exists.
-    #   3. no project_type either → single thread per session_id, as before.
+    # ------------------------------------------------------------------
+    # Memory isolation, most-specific-wins (unchanged from Steps 1-2):
+    # 1. project_id present → one thread per SPECIFIC project instance
+    # 2. no project_id yet → per-project_type split on session_id
+    # 3. neither → single thread per session_id
+    # ------------------------------------------------------------------
     if project_id is not None:
         thread_id = f"project_{project_id}"
     elif project_type:
         thread_id = f"{session_id}_{project_type}"
     else:
         thread_id = session_id
-    print(f"   🧵 thread_id: {thread_id}")
-    config = {"configurable": {"thread_id": thread_id}}
 
+    print(f"   🧵 thread_id: {thread_id}")
+
+    config = {"configurable": {"thread_id": thread_id}}
     existing = checkpointer.get(config)
     is_first_turn = (
         existing is None
         or not existing.get("channel_values", {}).get("messages")
     )
 
-    if is_first_turn or (genre_data and genre_data.get("top_genres")):
+    needs_context_injection = is_first_turn or (genre_data and genre_data.get("top_genres"))
+
+    if needs_context_injection:
+        # Only fetch project_details (a Supabase round trip) on turns that
+        # actually need a system prompt built — avoids hitting the DB on
+        # every single message of a long non-release-project conversation.
+        project_details = None
+        if project_type and project_type not in RELEASE_PROJECT_TYPES and project_id is not None:
+            try:
+                project_row = await get_project(project_id)
+                if project_row:
+                    project_details = project_row.get("details") or {}
+                    print(f"   📋 Project details loaded: {project_details}")
+                else:
+                    print(f"   ⚠️ No project row found for project_id={project_id}")
+            except Exception as e:
+                print(f"   ⚠️ Could not load project details: {e}")
+                project_details = None
+
+        context_block = _build_system_prompt(
+            video_id,
+            video_title,
+            video_channel,
+            genre_data,
+            project_type,
+            project_details,
+        )
+
         agent_input = {
             "messages": [
                 {"role": "system", "content": context_block},
@@ -333,6 +393,7 @@ async def run_agent(
                 {"role": "user", "content": message},
             ]
         }
+
         if is_first_turn:
             print("   📌 First turn — injecting system context")
         else:
