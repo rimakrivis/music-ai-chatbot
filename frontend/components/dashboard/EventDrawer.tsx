@@ -52,6 +52,7 @@ interface EventDrawerProps {
   onSaveContent?: (eventId: number, content: string) => void;
   releaseDate?: string;
   audioFeatures?: Record<string, unknown> | null;
+  bandId?: string;
 }
 
 export default function EventDrawer({
@@ -64,6 +65,7 @@ export default function EventDrawer({
   onSaveContent,
   releaseDate,
   audioFeatures,
+  bandId,
 }: EventDrawerProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -133,6 +135,8 @@ export default function EventDrawer({
           doc_content: docContent,
           messages: conversationHistory,
           audio_features: audioFeatures ?? null,
+          project_id: event.projectId ?? null,
+          band_id: bandId ?? "",
         }),
       });
 
@@ -152,7 +156,7 @@ export default function EventDrawer({
     } finally {
       setLoading(false);
     }
-  }, [input, loading, event, messages.length, videoTitle, videoChannel, docContent, API]);
+  }, [input, loading, event, messages.length, videoTitle, videoChannel, docContent, API, bandId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

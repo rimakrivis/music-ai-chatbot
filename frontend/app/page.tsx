@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import DailyFeed from "@/components/dashboard/DailyFeed";
 import UploadPanel from "@/components/dashboard/UploadPanel";
 import { ProjectType } from "@/components/dashboard/ProjectTypeSelector";
@@ -13,7 +13,7 @@ import TodoDrawer from "@/components/dashboard/TodoDrawer";
 import AddToCalendarModal from "@/components/dashboard/AddToCalendarModal";
 import BandProfileForm from "@/components/dashboard/BandProfileForm";
 import { CalendarEvent, TodoItem, ChatMessage } from "@/lib/types";
-import { sendMessage, createProject, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
+import { sendMessage, createProject, getLatestProject, AnalyzeResponse, deleteCalendarEvent, rescheduleCalendarEvent } from "@/lib/api";
 
 export default function DashboardPage() {
   const [sessionId, setSessionId] = useState<string>("");
@@ -54,9 +54,14 @@ export default function DashboardPage() {
   });
 
   const [audioFeatures, setAudioFeatures] = useState<Record<string, unknown> | null>(null);
-  const [skippedSong, setSkippedSong] = useState(false);
   const [projectType, setProjectType] = useState<ProjectType | null>(null);
   const [currentProjectId, setCurrentProjectId] = useState<number | null>(null);
+
+  // Set right before an auto-detected project (see handleSendMessage) updates
+  // projectType/currentProjectId in the background, so the project-switch
+  // effect below skips its "reset chat + fetch project" side effects — those
+  // are only meant for the user manually clicking a project type button.
+  const skipNextProjectEffectRef = useRef(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -96,6 +101,7 @@ export default function DashboardPage() {
               completed: e.status === "done",
               savedContent: e.saved_content ?? "",
               linkedTodoId: e.linked_todo_id ?? undefined,
+              projectId: e.project_id ?? null,
             }))
           : []
       );
@@ -106,6 +112,7 @@ export default function DashboardPage() {
               title: t.title,
               completed: t.status === "done",
               linkedEventId: t.linked_event_id ?? undefined,
+              projectId: t.project_id ?? null,
             }))
           : []
       );
@@ -138,7 +145,6 @@ export default function DashboardPage() {
   }, [videoInfo?.video_id]);
 
   const handleVideoLoaded = useCallback((video: AnalyzeResponse) => {
-    setSkippedSong(false);
     localStorage.setItem("music_ai_last_video", JSON.stringify(video));
     setVideoInfo(video);
     if (video.audio_features && Object.keys(video.audio_features).length > 0) {
@@ -156,7 +162,6 @@ export default function DashboardPage() {
   }, []);
 
   const handleSkipUpload = useCallback(() => {
-    setSkippedSong(true);
     setChatMessages([
       {
         role: "assistant",
@@ -174,11 +179,15 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!projectType) return;
 
+    if (skipNextProjectEffectRef.current) {
+      skipNextProjectEffectRef.current = false;
+      return;
+    }
+
     const isReleaseType = projectType === "single_release" || projectType === "album_release";
 
     if (isReleaseType) {
-      setSkippedSong(false);
-      setChatMessages([
+        setChatMessages([
         {
           role: "assistant",
           content:
@@ -186,8 +195,7 @@ export default function DashboardPage() {
         },
       ]);
     } else {
-      setSkippedSong(true);
-      const label = projectType.replace("_", " ");
+        const label = projectType.replace("_", " ");
       setChatMessages([
         {
           role: "assistant",
@@ -195,18 +203,28 @@ export default function DashboardPage() {
         },
       ]);
     }
-    setEvents([]);
-    setTodos([]);
+    // Re-fetch from Supabase instead of clearing to [] — the calendar/todo
+    // list shows all of the band's tasks regardless of which project type
+    // is selected, so switching types shouldn't make existing tasks vanish.
+    loadFromSupabase();
 
-    // Concert is the only project type with its own project row so far —
-    // Social Campaign / Other follow the same pattern once their content is written.
+    // Every project type gets its own project row now — reuse the most
+    // recent one for this band+type if it exists, otherwise create one.
+    // This is what lets tasks be tagged with a project_id and the agenda
+    // filter down to "just this project" instead of always showing everything.
     setCurrentProjectId(null);
-    if (projectType === "concert" && bandId) {
-      createProject(bandId, "concert")
-        .then((project) => setCurrentProjectId(project.id))
-        .catch((err) => console.error("[page] Failed to create concert project", err));
+    if (projectType && bandId) {
+      getLatestProject(bandId, projectType)
+        .then((existing) => {
+          if (existing) {
+            setCurrentProjectId(existing.id);
+            return;
+          }
+          return createProject(bandId, projectType).then((project) => setCurrentProjectId(project.id));
+        })
+        .catch((err) => console.error("[page] Failed to load/create project", err));
     }
-  }, [projectType, bandId]);
+  }, [projectType, bandId, loadFromSupabase]);
 
   const handleToggleTodo = useCallback(
     async (id: number) => {
@@ -252,8 +270,14 @@ export default function DashboardPage() {
     [events]
   );
 
-  const completedCount = todos.filter((t) => t.completed).length;
-  const progressPercent = todos.length > 0 ? (completedCount / todos.length) * 100 : 0;
+  // "Agenda" (no project selected) shows every task for the band. Selecting
+  // a project type filters down to just that project's own tasks, tagged
+  // via projectId when they were saved.
+  const visibleEvents = projectType ? events.filter((e) => e.projectId === currentProjectId) : events;
+  const visibleTodos = projectType ? todos.filter((t) => t.projectId === currentProjectId) : todos;
+
+  const completedCount = visibleTodos.filter((t) => t.completed).length;
+  const progressPercent = visibleTodos.length > 0 ? (completedCount / visibleTodos.length) * 100 : 0;
 
   const handleEventClick = useCallback((event: CalendarEvent) => {
     setSelectedEvent(event);
@@ -300,7 +324,6 @@ export default function DashboardPage() {
     await fetch(`${API}/band/${bandId}`, { method: "DELETE" });
     setEvents([]);
     setTodos([]);
-    setSkippedSong(false);
     setProjectType(null);
     setChatMessages([
       { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh, or skip to plan without one." },
@@ -321,15 +344,6 @@ export default function DashboardPage() {
   }
 
   const handleSendMessage = async (message: string) => {
-    if (!videoInfo && !skippedSong) {
-      setChatMessages((prev) => [
-        ...prev,
-        { role: "user", content: message },
-        { role: "assistant", content: "Please load a YouTube song first, or skip to plan without one." },
-      ]);
-      return;
-    }
-
     setChatMessages((prev) => [...prev, { role: "user", content: message }]);
     setIsChatLoading(true);
 
@@ -370,6 +384,16 @@ export default function DashboardPage() {
         }
       } catch (_) {}
 
+      // No project was selected when this was sent, but the agent figured
+      // out which one it's about (e.g. "plan my concert" typed straight into
+      // Agenda) — sync the sidebar to match, without replaying the reset/
+      // fetch side effects meant for a manual click (see skipNextProjectEffectRef).
+      if (!projectType && data.project_type) {
+        skipNextProjectEffectRef.current = true;
+        setProjectType(data.project_type as ProjectType);
+        setCurrentProjectId(data.project_id ?? null);
+      }
+
       const hasTasks =
         (data.calendar_events && data.calendar_events.length > 0) ||
         (data.todo_items && data.todo_items.length > 0);
@@ -386,6 +410,10 @@ export default function DashboardPage() {
               }
             : undefined,
           tasksConfirmed: false,
+          // Use what the backend actually ran this turn under, not the live
+          // currentProjectId state — avoids the same save-time race we hit
+          // with the sidebar project switch.
+          projectId: data.project_id ?? currentProjectId,
         },
       ]);
     } catch (err) {
@@ -404,27 +432,28 @@ export default function DashboardPage() {
       <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[auto_1fr_340px] gap-6 h-[calc(100vh-48px)]">
 
         <Sidebar
-          events={events}
+          events={visibleEvents}
           onEventClick={handleEventClick}
           progress={progressPercent}
-          todos={todos}
+          todos={visibleTodos}
           onOpenTodoDrawer={() => setTodoDrawerOpen(true)}
           onOpenBandProfile={() => setBandProfileOpen(true)}
           activeProjectType={projectType}
           onSelectProjectType={setProjectType}
+          onShowAgenda={() => setProjectType(null)}
           onOpenAddEventModal={() => setAddEventModalOpen(true)}
           onReset={handleReset}
         />
 
         <main className="overflow-y-auto pr-2 -mr-2">
-          {events.length === 0 ? (
+          {visibleEvents.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
               <span className="text-5xl">🎵</span>
               <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
             </div>
           ) : (
             <DailyFeed
-              events={events}
+              events={visibleEvents}
               onEventClick={handleEventClick}
               onDeleteEvent={handleDeleteEvent}
               onRescheduleEvent={handleRescheduleEvent}
@@ -449,6 +478,7 @@ export default function DashboardPage() {
                 <TaskConfirmationCard
                   bandId={bandId}
                   videoId={videoInfo?.video_id ?? ""}
+                  projectId={msg.projectId}
                   calendarEvents={msg.tasks.calendar_events}
                   todoItems={msg.tasks.todo_items}
                   onConfirm={() => handleTaskConfirm(i)}
@@ -472,12 +502,13 @@ export default function DashboardPage() {
         onSaveContent={handleSaveContent}
         releaseDate={events.find(e => e.type === "release")?.date ?? ""}
         audioFeatures={audioFeatures}
+        bandId={bandId}
       />
 
       <TodoDrawer
         open={todoDrawerOpen}
         onClose={() => setTodoDrawerOpen(false)}
-        todos={todos}
+        todos={visibleTodos}
         onToggle={handleToggleTodo}
         onTitleClick={(todo) => {
           setTodoDrawerOpen(false);

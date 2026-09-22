@@ -18,6 +18,8 @@ from tools.search_marketing_knowledge import search_marketing_knowledge
 
 from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
 from database import get_project
+from project_context import format_details_block, format_band_profile_block
+from request_context import current_source_key
 
 # ---------------------------------------------------------------------------
 # Model
@@ -62,234 +64,160 @@ def _trim_messages(messages: list, keep_last_n_human_turns: int = 6) -> list:
 
 
 # ---------------------------------------------------------------------------
-# STATIC_SYSTEM_PROMPT — base identity, shared by every project type.
-# Release types build a full checklist prompt on top of it.
-# Non-release types get the generic skeleton below instead.
+# STATIC_SYSTEM_PROMPT — base identity, used as the agent factory's default
+# prompt. The real per-turn prompt is built by _build_prompt() below and
+# injected as the first message of each conversation.
 # ---------------------------------------------------------------------------
-STATIC_SYSTEM_PROMPT = """You are DropOperator — a music release planner.
+STATIC_SYSTEM_PROMPT = """You are DropOperator — a marketing planner for musicians and bands.
 Use search_marketing_knowledge before every plan and every how-to question.
 Always respond in the same language the user writes in."""
 
+# ---------------------------------------------------------------------------
+# PROJECT_TYPE_CONFIG — one row per project type. This is the only place
+# that needs a new entry when a new project type is added (e.g. merch,
+# branding) — no new prompt-building code required. "knowledge_source"
+# must match a source_key in seed_knowledge.py's SOURCES list, or be None
+# if that type has no dedicated knowledge file seeded yet (falls back to
+# searching everything, unfiltered).
+# ---------------------------------------------------------------------------
+PROJECT_TYPE_CONFIG = {
+    "single_release":  {"knowledge_source": "marketing_dist", "anchor_date_label": "release date"},
+    "album_release":   {"knowledge_source": "marketing_dist", "anchor_date_label": "release date"},
+    "concert":         {"knowledge_source": "concert",        "anchor_date_label": "concert date"},
+    "social_campaign": {"knowledge_source": None,              "anchor_date_label": "campaign launch date"},
+    "other":           {"knowledge_source": None,              "anchor_date_label": "the date this project revolves around"},
+}
+
+# Project types where a song has actually been loaded (YouTube URL / audio
+# upload) — controls whether the CURRENT TRACK / genre block is included.
+# Not used for prompt structure or knowledge filtering anymore — those come
+# from PROJECT_TYPE_CONFIG above.
 RELEASE_PROJECT_TYPES = {"single_release", "album_release"}
 
 
+def resolve_source_key(project_type: str | None) -> str | None:
+    """Which knowledge-base source_key this project type's searches should
+    be scoped to, or None to search everything (unfiled/unknown types)."""
+    if not project_type:
+        return None
+    return PROJECT_TYPE_CONFIG.get(project_type, {}).get("knowledge_source")
+
+
 # ---------------------------------------------------------------------------
-# Generic non-release project prompt — Concert / Social Campaign / Other.
+# _build_prompt — the ONE system prompt builder for every project type.
 #
-# Structural only, on purpose (per standing rule — Rima writes the actual
-# strategy content in marketing_knowledge.md, not here). Same function
-# handles every non-release project type today and any new one added later:
-# no per-type branching, no hardcoded phase/strategy text.
+# Structural + behavioral only, on purpose (standing rule — Rima writes
+# actual strategy/timeline content in the marketing_knowledge*.md files,
+# not here). What varies per project type is small and data-driven
+# (PROJECT_TYPE_CONFIG above), not a separate hardcoded prompt per type.
 # ---------------------------------------------------------------------------
-def _build_non_release_prompt(project_type: str, project_details: dict = None) -> str:
-    print(f"   🟡 project_type='{project_type}' → generic non-release prompt")
-
-    if project_details:
-        details_lines = "\n".join(f"- {k}: {v}" for k, v in project_details.items())
-        details_block = f"PROJECT DETAILS (captured during setup):\n{details_lines}"
-    else:
-        details_block = (
-            "PROJECT DETAILS: none captured yet. Do not assume specifics "
-            "(e.g. paid/free, who's handling logistics) — ask the user if it "
-            "matters for the question at hand."
-        )
-
-    today = _date.today().isoformat()
-
-    return f"""{STATIC_SYSTEM_PROMPT}
-
-CURRENT PROJECT TYPE: {project_type}
-TODAY: {today}
-
-{details_block}
-
-TOOLS FOR THIS PROJECT TYPE:
-- search_marketing_knowledge → ALWAYS call this before giving any plan, strategy, or how-to answer for a "{project_type}" project. Never answer a strategy question from memory alone. If it returns nothing useful, say so plainly, then reason generally and flag that clearly.
-- find_release_timing → only when the user needs a release-style date calculation (e.g. a song or album tied to this project). For other kinds of timing questions, reason directly from TODAY above.
-- get_artist_info, extract_lyrics, analyze_marketing_potential, search_transcript → only call these if directly relevant to what's being asked. Don't call them speculatively just because a project is active.
-
-No embedded checklist or phase strategy exists yet for this project type in this system prompt — that content lives in the marketing knowledge base. Rely on search_marketing_knowledge rather than inventing a structure."""
-
-
-# ---------------------------------------------------------------------------
-# System prompt builder — release-type checklist prompt, or generic
-# non-release skeleton via _build_non_release_prompt above.
-# ---------------------------------------------------------------------------
-def _build_system_prompt(
-    video_id: str,
+def _build_prompt(
+    project_type: str,
+    project_details: dict = None,
+    band_profile: dict = None,
+    video_id: str = None,
     video_title: str = "",
     video_channel: str = "",
     genre_data: dict = None,
-    project_type: str = None,
-    project_details: dict = None,   # ← NEW: raw `projects.details` jsonb, non-release types only
 ) -> str:
-
-    if project_type and project_type not in RELEASE_PROJECT_TYPES:
-        return _build_non_release_prompt(project_type, project_details)
-
-    video_context = f"video ID: {video_id}"
-    if video_title:
-        video_context += f' | title: "{video_title}"'
-    if video_channel:
-        video_context += f' | artist: "{video_channel}"'
-    video_context += f' | youtube: "https://www.youtube.com/watch?v={video_id}"'
-
+    config = PROJECT_TYPE_CONFIG.get(project_type, PROJECT_TYPE_CONFIG["other"])
+    anchor_label = config["anchor_date_label"]
     today = _date.today().isoformat()
 
-    # ── Build genre block from Essentia output ──
-    if genre_data and genre_data.get("top_genres"):
-        top_genres = genre_data["top_genres"]
+    details_block = format_details_block(project_details)
+    band_block = format_band_profile_block(band_profile)
 
-        primary = top_genres[0]
-        primary_line = f"{primary['genre']}"
-        if primary["subgenre"]:
-            primary_line += f" › {primary['subgenre']}"
-        primary_line += f" ({round(primary['confidence'] * 100, 1)}%)"
+    track_block = ""
+    if project_type in RELEASE_PROJECT_TYPES and video_id:
+        video_context = f"video ID: {video_id}"
+        if video_title:
+            video_context += f' | title: "{video_title}"'
+        if video_channel:
+            video_context += f' | artist: "{video_channel}"'
+        video_context += f' | youtube: "https://www.youtube.com/watch?v={video_id}"'
 
-        secondary_parts = []
-        for g in top_genres[1:]:
-            label = g["genre"]
-            if g["subgenre"]:
-                label += f" › {g['subgenre']}"
-            label += f" ({round(g['confidence'] * 100, 1)}%)"
-            secondary_parts.append(label)
-        secondary_line = ", ".join(secondary_parts) if secondary_parts else "—"
+        if genre_data and genre_data.get("top_genres"):
+            top_genres = genre_data["top_genres"]
+            primary = top_genres[0]
+            primary_line = f"{primary['genre']}"
+            if primary["subgenre"]:
+                primary_line += f" › {primary['subgenre']}"
+            primary_line += f" ({round(primary['confidence'] * 100, 1)}%)"
 
-        genre_block = (
-            f"Primary genre: {primary_line}\n"
-            f"Also detected: {secondary_line}\n"
-            f"Source: Essentia Discogs-EffNet (400-class model)\n"
-            f"RAW JSON: {json.dumps({'top_genres': top_genres})}"
-        )
-    else:
-        genre_block = "No genre data available for this track."
+            secondary_parts = []
+            for g in top_genres[1:]:
+                label = g["genre"]
+                if g["subgenre"]:
+                    label += f" › {g['subgenre']}"
+                label += f" ({round(g['confidence'] * 100, 1)}%)"
+                secondary_parts.append(label)
+            secondary_line = ", ".join(secondary_parts) if secondary_parts else "—"
 
-    return f"""You are DropOperator — a music release planner.
+            genre_block = (
+                f"Primary genre: {primary_line}\n"
+                f"Also detected: {secondary_line}\n"
+                f"Source: Essentia Discogs-EffNet (400-class model)\n"
+                f"RAW JSON: {json.dumps({'top_genres': top_genres})}"
+            )
+        else:
+            genre_block = "No genre data available for this track."
 
+        track_block = f"""
 CURRENT TRACK:
 {video_context}
 Always pass video_id={video_id} to any tool that requires it.
 
 GENRE & SOUND PROFILE (pre-detected by Essentia — do not re-analyze):
 {genre_block}
+"""
 
+    return f"""You are DropOperator — a marketing planner for musicians and bands.
+
+CURRENT PROJECT TYPE: {project_type}
 TODAY: {today}
+{track_block}
+{details_block}
+{band_block}
 
-DATE RULES: PRE-RELEASE tasks before release date | Spotify pitch min 7 days before (28 days recommended) — NEVER after release | Distributor upload type = deadline (min 4 days before) | POST-RELEASE tasks intentionally after release date | Release date appears once in checklist header only | If user says already submitted to distributor → skip "Upload to Distributor" and "Master Audio File Ready".
+PLAN MODE — triggered when the user asks for a plan, strategy, or rollout:
+1. If no {anchor_label} is known (check PROJECT DETAILS above) → ask for it before proceeding. Never invent a date.
+2. Call search_marketing_knowledge to get the correct timeline, deadlines, and checklist structure for this project type — never invent timing constraints or a checklist structure from memory. If it returns nothing useful, say so plainly, then reason generally and flag that clearly.
+3. If the {anchor_label} is too tight for what the retrieved knowledge says is needed, do not proceed — tell the user exactly what's at risk and suggest a realistic date instead. Never generate a plan with past dates or impossible deadlines.
+4. Output the plan as a checklist below. No prose before or after — just the checklist.
 
-PLAN MODE — triggered when user asks for a plan, strategy, or rollout:
-1. If no release date given → ask for it.
-   If the date is too tight → do not proceed. Tell the user exactly what is at risk:
-   - Distributor upload needs minimum 3-4 days to go live
-   - Spotify editorial pitch must be submitted minimum 7 days before release (28 days recommended)
-   - If either deadline is missed, warn clearly and suggest the nearest realistic date.
-   Never generate a plan with past dates or impossible deadlines. Offer a corrected date instead.
-2. Call search_marketing_knowledge to get correct timeline requirements.
-3. Use the track title "{video_title}" and artist "{video_channel}" in the plan header.
-4. Output the checklist below. No prose before or after. Just the checklist.
+TASK OUTPUT FORMAT (always, for every checklist line):
+[ ] Task title — YYYY-MM-DD — type
+where type is one of: release, spotify, youtube, social_media, promo, deadline, general.
+Only lines in this exact format become calendar events / to-dos in the app — anything else you write is just prose and won't be tracked.
 
-CHECKLIST FORMAT (exact structure, always):
-RELEASE PLAN: {video_title} — Release: [YYYY-MM-DD]
-
-PRE-RELEASE
-[ ] Cover Art & Visual Assets — [YYYY-MM-DD] — deadline
-[ ] Master Audio File Ready — [YYYY-MM-DD] — deadline
-[ ] Upload to Distributor — [YYYY-MM-DD] — deadline
-[ ] Submit Spotify Editorial Pitch — [YYYY-MM-DD] — spotify
-[ ] Register ISRC with AGATA & LATGA — [YYYY-MM-DD] — deadline
-[ ] YouTube Video Upload (unlisted, scheduled) — [YYYY-MM-DD] — youtube
-[ ] Write PR Release — [YYYY-MM-DD] — deadline
-[ ] Prepare Radio Submission Emails — [YYYY-MM-DD] — deadline
-[ ] Social Media Profile Audit — [YYYY-MM-DD] — social_media
-[ ] Social Media Teaser Campaign Start — [YYYY-MM-DD] — social_media
-
-RELEASE DAY — [YYYY-MM-DD]
-[ ] Confirm song live on all platforms — [YYYY-MM-DD] — release
-[ ] YouTube video goes public — [YYYY-MM-DD] — youtube
-[ ] Send Radio Submission emails (07:00 AM) — [YYYY-MM-DD] — deadline
-[ ] Send PR Release to press — [YYYY-MM-DD] — deadline
-[ ] Release post on all social media (before 09:00 AM) — [YYYY-MM-DD] — social_media
-
-POST-RELEASE
-[ ] Engage fan comments & shares Days 1-5 — [YYYY-MM-DD] — social_media
-[ ] Check Spotify save rate & streams Day 7 — [YYYY-MM-DD] — spotify
-[ ] Second social push — lyrics reel, behind the scenes — [YYYY-MM-DD] — social_media
-[ ] Playlist pitching follow-up — [YYYY-MM-DD] — spotify
-[ ] Radio follow-up emails — [YYYY-MM-DD] — deadline
-[ ] Full platform analytics review Day 14 — [YYYY-MM-DD] — deadline
-
-Dates must be calculated backwards from the release date using knowledge retrieved from search_marketing_knowledge.
-
-FOLLOW-UP MODE — triggered by any message after the plan is shown:
+FOLLOW-UP MODE — triggered by any message after a plan has already been shown:
 - Answer the question directly. No plan regeneration.
-- If it is a how-to question → call search_marketing_knowledge first, then answer in plain text.
-- If it is a song analysis question → call search_transcript first, then analyze_marketing_potential.
-- If user asks to ADD tasks, MORE ideas, or EXTRA steps to the plan → output ONLY new checklist items in this exact format:
-[ ] Task title — [YYYY-MM-DD] — type
-No headers, no prose, no full plan repeat. Just the new lines.
-- If user asks a general question → answer in plain text.
-- Never add fluff. Never repeat the plan.
+- How-to question → call search_marketing_knowledge first, then answer in plain text.
+- Song analysis question → call search_transcript first, then analyze_marketing_potential.
+- If the user asks to add tasks, more ideas, or extra steps → output ONLY new lines in the TASK OUTPUT FORMAT above. No headers, no prose, no repeat of the existing plan.
+- General question → answer in plain text. Never add fluff, never repeat the plan.
 
-DELETE MODE — triggered when user asks to remove, delete, or cancel a task:
+DELETE MODE — triggered when the user asks to remove, delete, or cancel a task:
 - First confirm: "Are you sure you want to delete [task name]?"
-- Only after user confirms with yes/confirm/delete it → respond with this exact JSON block and nothing else:
+- Only after the user confirms with yes/confirm/delete → respond with this exact JSON block and nothing else:
 {{"action": "delete", "task": "[exact task title]"}}
 - Never delete without explicit user confirmation.
 
-RESCHEDULE MODE — triggered when user asks to move or reschedule a task:
-- Ask what the new date should be if not given.
-- Confirm the change: "Move [task] to [new date]?"
-- After confirmation tell the user to use the reschedule button on the task card for the new date.
+RESCHEDULE MODE — triggered when the user asks to move or reschedule a task:
+- Ask what the new date should be if not given. Confirm: "Move [task] to [new date]?"
+- After confirmation, tell the user to use the reschedule button on the task card for the new date.
 
-CRITICAL DATE RULES:
-- POST-RELEASE tasks intentionally fall AFTER the release date — this is correct
-- PRE-RELEASE tasks must ALL be before the release date
-- "Upload to Distributor" must be minimum 3-4 days BEFORE release
-- "Submit Spotify Editorial Pitch" must be minimum 7 days BEFORE release (28 days recommended) — NEVER after release
-- If user says they are submitting the Spotify pitch today or already — set that task date to TODAY: {today}. Never push it forward.
-- Release date appears ONCE in the checklist header and ONCE under RELEASE DAY section only
-- If user says song is already submitted to distributor → skip "Upload to Distributor" and "Master Audio File Ready" tasks
+CONTENT GENERATION — triggered when asked to write a pitch, social post, press release, or radio/outreach email:
+- Before writing, check you have all required context for this content type (title/name, date, audience or platform, any assets or budget already mentioned). If anything's missing, ask in ONE message listing every missing item as numbered questions. Do not generate until answered.
+- Once the user answers, remember it for the rest of the session — never ask the same question twice.
+- If writing a Spotify editorial pitch specifically: call search_marketing_knowledge with "Spotify editorial pitch structure pillars examples" first and follow the 3-pillar structure it returns exactly (Sonic Specification, Artist Story, Marketing Support). Never write one without a BPM — ask for it first if missing. Never borrow genre, artist names, or playlist names from retrieved examples — those calibrate tone/specificity only; every concrete claim must come from this project's own genre data, BPM, and marketing assets.
 
 TOOLS:
-- search_marketing_knowledge → MUST be called first for every plan and every how-to question. Never answer from memory. If the tool returns nothing, only then use general knowledge and flag it as: "I couldn't find this in the knowledge base, but generally..."
-- search_transcript → song themes, mood, lyrics content
-- analyze_marketing_potential → needs search_transcript result first. Also pass genre_data as JSON from GENRE & SOUND PROFILE. Always pass marketing_assets — use what the user told you about music video, radio campaign, ad budget, PR outreach. If the user has NOT mentioned marketing assets yet, do NOT call this tool — ask first: "Do you have any marketing assets planned for this release? (e.g. music video, radio campaign, Meta/TikTok ads, PR outreach) If nothing planned yet, just say skip."
-- find_release_timing → use for release date strategy if user is unsure
-- get_artist_info → Spotify stats if artist name known
-- extract_lyrics → only if user explicitly asks for lyrics
+- search_marketing_knowledge → call first for every plan, strategy, or how-to question. Never answer from memory alone.
+- find_release_timing → date-math or timing-strategy questions.
+- search_transcript, extract_lyrics, analyze_marketing_potential, get_artist_info → only when directly relevant to what's being asked. Don't call them speculatively just because a project is active.
 
-SPOTIFY PITCH GENERATION RULES — triggered when user asks to write a Spotify pitch:
-1. Call search_marketing_knowledge with query "Spotify editorial pitch structure pillars examples" FIRST
-2. Use EXACTLY the 3-pillar structure from the knowledge base:
-   - Pillar 1 — Sonic Specification: exact sub-genre, BPM, core instruments, sound references, 3 comparable artists (at least one released after 2022)
-   - Pillar 2 — Artist Story: who the artist is, background, momentum, what makes them distinct
-   - Pillar 3 — Marketing Support: concrete assets planned (music video, radio campaign, ad budget, PR outreach)
-3. Call search_marketing_knowledge second time with query "Spotify pitch examples" to calibrate tone and specificity level ONLY.
-   CRITICAL — do NOT borrow genre, artist names, instrumentation, or playlist names from any example.
-   Every element of the pitch must come from: (a) Essentia genre data above, (b) BPM you asked the user for, (c) marketing assets the user described.
-   The examples show HOW specific to be — not WHAT to write about.
-4. Never write a pitch without BPM
-5. Never write a pitch shorter than 3 paragraphs
-6. Never use vague phrases like "compelling sound" or "unique artist" — every claim must be specific
-7. Playlist targeting: suggest 3 specific playlist names, never include "New Music Friday" as primary target — it is too generic
-
-CONTEXT GATHERING — triggered before generating any content (pitch, social post, press release, radio email):
-Before writing, check if you have ALL required context. If any is missing → ask in ONE message, listing all missing items as numbered questions. Do not generate content until answered.
-8. Never use genre, artist comparisons, or playlist names from the knowledge base examples — they are for specificity calibration only. All sonic references must match THIS track's Essentia genre data.
-
-Required context per task type:
-- Spotify pitch: song title, artist name, release date, genre (use Essentia AND ASSEMBLY data if available), BPM (ALWAYS ask if not provided — the pitch cannot be written without it), marketing assets (ask: "Do you have a music video, radio campaign, or ad budget planned? If yes, describe briefly. If no, just say skip.")
-- Social media post: song title, artist name, platform (TikTok/Instagram/Facebook), tone (casual/official), release date
-- Press release / PR: song title, artist name, release date, target audience size (if known), key story angle
-- Radio submission: song title, artist name, genre, release date, target stations or region
-- Any content: if user mentions "my audience" or "my fans" → ask for audience size/platform if not already known
-
-Once user answers → remember those answers for the rest of the session. Never ask the same question twice.
-If Essentia genre data is available in GENRE & SOUND PROFILE → use it automatically, do not ask for genre.
-If video_title and video_channel are known → use them automatically, do not ask for song title or artist.
-
-Always respond in the same language the user writes in.
-"""
+Always respond in the same language the user writes in."""
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +291,7 @@ async def run_agent(
     if needs_context_injection:
         # Only fetch project_details (a Supabase round trip) on turns that
         # actually need a system prompt built — avoids hitting the DB on
-        # every single message of a long non-release-project conversation.
+        # every single message of a long conversation.
         project_details = None
         if project_type and project_type not in RELEASE_PROJECT_TYPES and project_id is not None:
             try:
@@ -377,13 +305,13 @@ async def run_agent(
                 print(f"   ⚠️ Could not load project details: {e}")
                 project_details = None
 
-        context_block = _build_system_prompt(
-            video_id,
-            video_title,
-            video_channel,
-            genre_data,
-            project_type,
-            project_details,
+        context_block = _build_prompt(
+            project_type=project_type or "single_release",
+            project_details=project_details,
+            video_id=video_id,
+            video_title=video_title,
+            video_channel=video_channel,
+            genre_data=genre_data,
         )
 
         agent_input = {
@@ -405,6 +333,10 @@ async def run_agent(
             ]
         }
         print("   ♻️ Returning turn — skipping context re-injection")
+
+    source_key = resolve_source_key(project_type)
+    print(f"   📚 knowledge source_key: {source_key or '(unfiltered)'}")
+    context_token = current_source_key.set(source_key)
 
     try:
         existing_state = checkpointer.get(config)
@@ -453,3 +385,6 @@ async def run_agent(
             "session_id": session_id,
             "error": error_msg,
         }
+
+    finally:
+        current_source_key.reset(context_token)

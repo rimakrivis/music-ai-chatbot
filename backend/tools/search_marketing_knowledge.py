@@ -1,10 +1,7 @@
-import os
 from langchain.tools import tool
-from langchain_openai import OpenAIEmbeddings
-from langchain_pinecone import PineconeVectorStore
-from config import OPENAI_API_KEY
+from knowledge_search import search_knowledge
+from request_context import current_source_key
 
-PINECONE_INDEX_NAME = os.getenv("PINECONE_INDEX_NAME", "music-ai-chat")
 
 @tool
 def search_marketing_knowledge(query: str) -> str:
@@ -15,25 +12,10 @@ def search_marketing_knowledge(query: str) -> str:
     distributor deadlines. Use this when the user asks HOW
     to do something marketing-related.
     """
-    print(f"[search_marketing_knowledge] Query: '{query}'")
-    try:
-        embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            openai_api_key=OPENAI_API_KEY
-        )
-        vector_store = PineconeVectorStore(
-            index_name=PINECONE_INDEX_NAME,
-            embedding=embeddings,
-            namespace="marketing_knowledge",
-        )
-        results = vector_store.similarity_search(query, k=3)
-        if not results:
-            return "No relevant marketing knowledge found."
-        output = []
-        for doc in results:
-            header = doc.metadata.get("section") or ""
-            output.append(f"[{header}]\n{doc.page_content}")
-        print(f"   📚 Retrieved {len(results)} marketing knowledge chunks")
-        return "\n\n---\n\n".join(output)
-    except Exception as e:
-        return f"Knowledge search error: {str(e)}"
+    source_key = current_source_key.get()
+    print(f"[search_marketing_knowledge] Query: '{query}' | source_key: {source_key}")
+    result = search_knowledge(query, source_key=source_key, k=3)
+    if not result:
+        return "No relevant marketing knowledge found."
+    print(f"   📚 Retrieved marketing knowledge chunks")
+    return result

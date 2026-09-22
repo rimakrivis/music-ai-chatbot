@@ -7,6 +7,7 @@ export interface CalendarEvent {
   completed?: boolean;
   savedContent?: string;
   linkedTodoId?: number;
+  projectId?: number | null;
 }
 
 export interface TodoItem {
@@ -14,6 +15,7 @@ export interface TodoItem {
   title: string;
   completed: boolean;
   linkedEventId?: number;
+  projectId?: number | null;
 }
 
 export interface ExtractedTasks {
@@ -26,6 +28,10 @@ export interface ChatMessage {
   content: string;
   tasks?: ExtractedTasks;
   tasksConfirmed?: boolean;
+  // Snapshot of currentProjectId at the moment this reply arrived — used to
+  // save its tasks under the right project even if the user switches the
+  // sidebar's selection before clicking "Save" on the confirmation card.
+  projectId?: number | null;
 }
 
 export interface DotDate {

@@ -15,6 +15,7 @@ interface SidebarProps {
   onOpenBandProfile: () => void;
   activeProjectType: ProjectType | null;
   onSelectProjectType: (type: ProjectType) => void;
+  onShowAgenda: () => void;
   onOpenAddEventModal: () => void;
   onReset: () => void;
 }
@@ -107,6 +108,7 @@ export default function Sidebar({
   onOpenBandProfile,
   activeProjectType,
   onSelectProjectType,
+  onShowAgenda,
   onOpenAddEventModal,
   onReset,
 }: SidebarProps) {
@@ -136,12 +138,16 @@ export default function Sidebar({
         <IconMenu />
       </button>
 
-      {/* Agenda — always the default center view; this button doesn't need
-          local "active" state since page.tsx has no other center view to
-          switch away from besides the To-do drawer, which overlays rather
-          than replaces. */}
-      <button type="button" className={`${navItemClass} bg-slate-800 text-white hover:bg-slate-800 mb-1`}>
-        <IconAgenda active />
+      {/* Agenda — shows every task for the band. Active whenever no project
+          type is selected; clicking it clears the project filter. */}
+      <button
+        type="button"
+        onClick={onShowAgenda}
+        className={`${navItemClass} mb-1 ${
+          !activeProjectType ? "bg-slate-800 text-white hover:bg-slate-800" : ""
+        }`}
+      >
+        <IconAgenda active={!activeProjectType} />
         {!collapsed && <span className="font-medium">Agenda</span>}
       </button>
 

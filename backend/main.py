@@ -76,7 +76,9 @@ from pipeline import (
     get_transcript_from_chroma,
 )
 from tools.genre_detect import detect_genres 
-from agent import create_music_agent, run_agent
+from agent import create_music_agent, run_agent, PROJECT_TYPE_CONFIG, RELEASE_PROJECT_TYPES, resolve_source_key
+from project_context import fetch_non_release_context, format_details_block, format_band_profile_block
+from knowledge_search import search_knowledge
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +151,8 @@ class ChatResponse(BaseModel):
     session_id: str
     calendar_events: list[dict] = []
     todo_items: list[dict] = []
+    project_type: str | None = None   # the project type this turn actually ran under
+    project_id: int | None = None     # (whether the frontend selected it, or the agent detected it)
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +553,7 @@ async def extract_tasks_from_response(response_text: str) -> dict:
 
     system_prompt = f"""You are a task extraction assistant. Today's date is {today}.
 
-The input is a music release plan checklist. Every line that starts with "[ ]" is a task. Extract ALL of them without exception.
+The input is a plan checklist (release, concert, campaign, or other project type). Every line that starts with "[ ]" is a task. Extract ALL of them without exception.
 
 Return ONLY valid JSON — no markdown, no backticks, no explanation:
 {{
@@ -610,6 +614,43 @@ Rules:
 
 
 # ---------------------------------------------------------------------------
+# classify_project_type — guesses which project a message is about when the
+# frontend hasn't selected one yet (user typed straight into the home
+# Agenda chat instead of picking a project first). Always returns one of
+# PROJECT_TYPE_CONFIG's keys — "other" is the catch-all when unclear, same
+# as the sidebar's own "Other" project type.
+# ---------------------------------------------------------------------------
+
+async def classify_project_type(message: str) -> str:
+    valid_types = list(PROJECT_TYPE_CONFIG.keys())
+    system_prompt = f"""Classify which kind of music-marketing project this message is about.
+Valid types: {", ".join(valid_types)}.
+Return ONLY the type name, nothing else — no punctuation, no explanation.
+If it's not clearly about one of these, return "other"."""
+
+    try:
+        client = AsyncOpenAI()
+        completion = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message[:500]},
+            ],
+            temperature=0,
+            max_tokens=10,
+        )
+        guess = (completion.choices[0].message.content or "").strip().strip('"').lower()
+        if guess not in valid_types:
+            print(f"   ⚠️ [classify_project_type] Unexpected label '{guess}' — defaulting to 'other'")
+            return "other"
+        print(f"   🧭 [classify_project_type] '{message[:60]}' → {guess}")
+        return guess
+    except Exception as e:
+        print(f"   ⚠️ [classify_project_type] Failed: {e} — defaulting to 'other'")
+        return "other"
+
+
+# ---------------------------------------------------------------------------
 # /chat
 # ---------------------------------------------------------------------------
 
@@ -642,6 +683,23 @@ async def chat(request: ChatRequest):
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
+    # No project selected in the sidebar yet → guess which one this message
+    # is about, then reuse-or-create that project, same as clicking it
+    # manually would. Only runs once per topic: once the frontend gets the
+    # resolved project_type/project_id back, it starts sending them itself.
+    project_type = request.project_type
+    project_id = request.project_id
+    if not project_type and request.band_id:
+        project_type = await classify_project_type(request.message)
+        try:
+            existing = await get_latest_project_for_band(request.band_id, project_type)
+            project = existing or await create_project(request.band_id, project_type)
+            project_id = project["id"]
+            print(f"   🧭 Auto-detected project_type={project_type} → project_id={project_id}")
+        except Exception as e:
+            print(f"   ⚠️ Could not resolve auto-detected project: {e}")
+            project_type, project_id = None, None
+
     try:
         result = await run_agent(
             agent=agent_state["agent"],
@@ -651,9 +709,9 @@ async def chat(request: ChatRequest):
             video_title=request.video_title,
             video_channel=request.video_channel,
             genre_data=request.audio_features,
-            project_type=request.project_type,
+            project_type=project_type,
             band_id=request.band_id,
-            project_id=request.project_id,
+            project_id=project_id,
         )
 
         tasks = await extract_tasks_from_response(result["response"])
@@ -664,6 +722,8 @@ async def chat(request: ChatRequest):
             session_id=result["session_id"],
             calendar_events=tasks["calendar_events"],
             todo_items=tasks["todo_items"],
+            project_type=project_type,
+            project_id=project_id,
         )
 
     except Exception as e:
@@ -695,57 +755,37 @@ async def event_chat(request: dict):
     video_id = request.get("video_id", "")
     doc_content = request.get("doc_content", "")
     audio_features = request.get("audio_features", None)
+    project_id = request.get("project_id")
+    band_id = request.get("band_id")
     print(f"   🎵 [event-chat] audio_features received: {bool(audio_features)} | top_genres: {bool(audio_features and audio_features.get('top_genres'))}")
 
+    # The frontend only sends the clicked task's own project_id — look up
+    # its type ourselves rather than trust a separately-passed value that
+    # could be stale (e.g. viewing Agenda while a different project is
+    # "selected" in the sidebar).
+    project_type = None
+    if project_id is not None:
+        try:
+            project_row = await get_project(project_id)
+            if project_row:
+                project_type = project_row.get("project_type")
+        except Exception as e:
+            print(f"   ⚠️ Could not resolve project_type for project_id={project_id}: {e}")
+
     print(f"\n📥 [/event-chat] Task: '{event_title}' | Message: '{message[:60]}'")
+    print(f"   project_type: {project_type} | project_id: {project_id} | band_id: {band_id}")
 
     if not message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
-    # 1 — search marketing knowledge in Pinecone
-    knowledge_context = ""
-    try:
-        from langchain_openai import OpenAIEmbeddings
-        from langchain_pinecone import PineconeVectorStore
+    # Same knowledge base, but scoped to this project type's own source file
+    # when we know it (see agent.py's PROJECT_TYPE_CONFIG / resolve_source_key)
+    # — release and concert tasks no longer pull from each other's content.
+    source_key = resolve_source_key(project_type)
+    knowledge_context = search_knowledge(f"{event_type} {event_title} {message}", source_key=source_key, k=3)
+    print(f"   📚 Knowledge search (source_key={source_key or '(unfiltered)'}): {'found chunks' if knowledge_context else 'nothing found'}")
 
-        _embeddings = OpenAIEmbeddings(
-            model="text-embedding-3-small",
-            openai_api_key=OPENAI_API_KEY,
-        )
-        vector_store = PineconeVectorStore(
-            index_name=os.getenv("PINECONE_INDEX_NAME", "music-ai-chat"),
-            embedding=_embeddings,
-            namespace="marketing_knowledge",
-        )
-        results = vector_store.similarity_search(
-            f"{event_type} {event_title} {message}", k=3
-        )
-        if results:
-            chunks = []
-            for doc in results:
-                header = doc.metadata.get("section") or ""
-                chunks.append(f"[{header}]\n{doc.page_content}")
-            knowledge_context = "\n\n---\n\n".join(chunks)
-            print(f"   📚 Retrieved {len(results)} knowledge chunks")
-            for doc in results:
-                print(f"      → [{doc.metadata.get('section', '?')}] {doc.page_content[:80]}...")
-        else:
-            print("   📚 No knowledge chunks found — using training data")
-    except Exception as e:
-        print(f"   ⚠️ Knowledge search failed: {e}")
-
-    # 2 — fetch transcript from Pinecone
-    transcript_context = ""
-    if video_id:
-        try:
-            result = get_transcript_from_chroma(video_id)
-            if result:
-                transcript_context = result["transcript_text"][:800]
-                print(f"   📄 Got transcript: {len(transcript_context)} chars")
-        except Exception as e:
-            print(f"   ⚠️ Could not fetch transcript: {e}")
-
-    # 3 — tone guide per event type
+    # 3 — tone guide per event type (shared by both branches below)
     tone_guide = {
         "spotify":      "formal, professional, industry-standard",
         "deadline":     "clear, direct, professional",
@@ -757,19 +797,33 @@ async def event_chat(request: dict):
     }
     tone = tone_guide.get(event_type, "professional but approachable")
 
-    # Build genre block
-    genre_block = ""
-    if audio_features and audio_features.get("top_genres"):
-        top = audio_features["top_genres"][0]
-        genre_block = f"\nGENRE: {top.get('genre')} › {top.get('subgenre')} ({round(top.get('confidence', 0) * 100, 1)}%)"
+    is_release_task = not project_type or project_type in RELEASE_PROJECT_TYPES
 
-    artist = (
-        video_channel
-        if video_channel and video_channel != "Unknown Artist"
-        else (video_title.split(" - ")[0] if " - " in video_title else video_channel)
-    )
+    if is_release_task:
+        # Unchanged from before: this task is tied to a song, so lyrics +
+        # Spotify-pitch-specific rules are relevant.
+        transcript_context = ""
+        if video_id:
+            try:
+                result = get_transcript_from_chroma(video_id)
+                if result:
+                    transcript_context = result["transcript_text"][:800]
+                    print(f"   📄 Got transcript: {len(transcript_context)} chars")
+            except Exception as e:
+                print(f"   ⚠️ Could not fetch transcript: {e}")
 
-    system_prompt = f"""You are a music industry professional. Write submission-ready content only.
+        genre_block = ""
+        if audio_features and audio_features.get("top_genres"):
+            top = audio_features["top_genres"][0]
+            genre_block = f"\nGENRE: {top.get('genre')} › {top.get('subgenre')} ({round(top.get('confidence', 0) * 100, 1)}%)"
+
+        artist = (
+            video_channel
+            if video_channel and video_channel != "Unknown Artist"
+            else (video_title.split(" - ")[0] if " - " in video_title else video_channel)
+        )
+
+        system_prompt = f"""You are a music industry professional. Write submission-ready content only.
 
 Task: "{event_title}" | Type: {event_type} | Date: {event_date}{f" | Release Date: {release_date}" if release_date else ""}
 Song: "{video_title}" by "{artist}"{genre_block}
@@ -792,6 +846,33 @@ Rules:
 - Always use the real artist name and song title — never omit them
 - If user mentions song name or artist in their message, use those instead of defaults
 - Output only the final content, no explanation"""
+    else:
+        # Concert / social campaign / other: no song to write about, so the
+        # song/lyrics/Spotify-pitch rules above don't apply. Uses this
+        # project's own details + the band profile instead, same as the
+        # main agent chat does (agent.py's _build_prompt).
+        ctx = await fetch_non_release_context(project_id, band_id)
+        details_block = format_details_block(ctx["project_details"])
+        band_block = format_band_profile_block(ctx["band_profile"])
+
+        system_prompt = f"""You are a music marketing professional. Write submission-ready content only.
+
+Task: "{event_title}" | Type: {event_type} | Date: {event_date}
+Project type: {project_type}
+Tone: {tone}
+
+{details_block}
+{band_block}
+
+{f"GUIDELINES:{chr(10)}{knowledge_context}" if knowledge_context else ""}
+{f"SAVED NOTES:{chr(10)}{doc_content[:400]}" if doc_content else ""}
+
+Rules:
+- Follow GUIDELINES strictly if provided — never invent timelines or structure it doesn't support.
+- Use PROJECT DETAILS and BAND PROFILE above for anything specific (venue, ticket price, audience, brand voice) instead of asking again if it's already there.
+- No placeholders ever — write real content.
+- If something concrete you need isn't in the context above, ask for it in one message rather than guessing.
+- Output only the final content, no explanation."""
 
     try:
         from openai import AsyncOpenAI as _AsyncOpenAI
@@ -854,7 +935,8 @@ async def get_transcript(video_id: str):
 async def create_calendar_events(request: dict):
     try:
         saved = await save_calendar_events(
-            request["band_id"], request.get("video_id"), request["events"]
+            request["band_id"], request.get("video_id"), request["events"],
+            project_id=request.get("project_id"),
         )
         return {"saved": saved, "status": "ok"}
     except Exception as e:
@@ -914,7 +996,8 @@ async def delete_band(band_id: str):
 async def create_todos(request: dict):
     try:
         saved = await save_todos(
-            request["band_id"], request.get("video_id"), request["items"]
+            request["band_id"], request.get("video_id"), request["items"],
+            project_id=request.get("project_id"),
         )
         return {"saved": saved, "status": "ok"}
     except Exception as e:

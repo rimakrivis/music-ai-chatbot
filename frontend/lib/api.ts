@@ -20,6 +20,8 @@ export interface ChatResponse {
   session_id: string;
   calendar_events?: { title: string; date: string; type: string }[];
   todo_items?: { title: string; due_date: string | null }[];
+  project_type?: string | null;
+  project_id?: number | null;
 }
 
 export interface TranscriptResponse {
@@ -122,6 +124,19 @@ export async function createProject(band_id: string, project_type: string): Prom
   }
   const data = await res.json();
   console.log("[api] createProject ✓", data.project);
+  return data.project;
+}
+
+export async function getLatestProject(band_id: string, project_type: string): Promise<Project | null> {
+  console.log("[api] getLatestProject →", { band_id, project_type });
+  const res = await fetch(`${API_URL}/projects/latest/${band_id}?project_type=${project_type}`);
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("[api] getLatestProject failed:", err);
+    throw new Error(`Get latest project failed: ${res.status} — ${err}`);
+  }
+  const data = await res.json();
+  console.log("[api] getLatestProject ✓", data.project);
   return data.project;
 }
 
