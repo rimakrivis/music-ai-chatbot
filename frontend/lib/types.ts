@@ -53,6 +53,7 @@ export interface BandProfileBasicInfo {
   languages: string[];
   bio: string;
   brand_voice: string[];
+  brand_voice_other: string;
   social_handles: { instagram: string; tiktok: string; spotify: string; youtube: string };
   content_restrictions: string;
 }
@@ -77,15 +78,11 @@ export interface BandProfileLiveShow {
 
 export interface BandProfileCareerStage {
   stage: "emerging" | "mid_level" | "established" | "";
-  previous_releases_count: number | null;
+  released_albums_count: number | null;
+  released_singles_count: number | null;
   best_release_performance: string;
   live_shows: BandProfileLiveShow[];
-  has_manager: boolean;
-  has_booking_agent: boolean;
-  has_label: boolean;
-  label_name: string;
-  has_pr: boolean;
-  release_cadence: string;
+  platforms: string[];
   comparable_artists: string[];
 }
 
@@ -133,7 +130,7 @@ export type BandProfileStatus = "empty" | "draft" | "complete";
 export const EMPTY_BAND_PROFILE: BandProfile = {
   basic_info: {
     artist_name: "", primary_genre: "", sub_genres: [], home_country: "",
-    main_markets: [], languages: [], bio: "", brand_voice: [],
+    main_markets: [], languages: [], bio: "", brand_voice: [], brand_voice_other: "",
     social_handles: { instagram: "", tiktok: "", spotify: "", youtube: "" },
     content_restrictions: "",
   },
@@ -143,10 +140,9 @@ export const EMPTY_BAND_PROFILE: BandProfile = {
     unknown_metrics: [], age_range: [18, 34], top_cities: [],
   },
   career_stage: {
-    stage: "", previous_releases_count: null, best_release_performance: "",
-    live_shows: [], has_manager: false, has_booking_agent: false,
-    has_label: false, label_name: "", has_pr: false,
-    release_cadence: "", comparable_artists: [],
+    stage: "", released_albums_count: null, released_singles_count: null,
+    best_release_performance: "", live_shows: [], platforms: [],
+    comparable_artists: [],
   },
   strengths_weaknesses: {
     what_works: [], what_works_other: "", what_weak: [], what_weak_other: "",

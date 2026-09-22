@@ -80,31 +80,41 @@ function TagInput({
   );
 }
 
+type MultiToggleOption = string | { label: string; description?: string };
+
 function MultiToggle({
   options,
   selected,
   onToggle,
 }: {
-  options: string[];
+  options: MultiToggleOption[];
   selected: string[];
   onToggle: (opt: string) => void;
 }) {
   return (
     <div className="flex flex-wrap gap-1.5">
-      {options.map((opt) => {
+      {options.map((raw) => {
+        const opt = typeof raw === "string" ? raw : raw.label;
+        const description = typeof raw === "string" ? undefined : raw.description;
         const active = selected.includes(opt);
         return (
           <button
             key={opt}
             type="button"
             onClick={() => onToggle(opt)}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border transition-colors ${
+            title={description}
+            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium border transition-colors text-left ${
               active
                 ? "bg-slate-800 text-white border-slate-800"
                 : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
             }`}
           >
-            {opt}
+            <span className="block">{opt}</span>
+            {description && (
+              <span className={`block text-[10px] font-normal ${active ? "text-slate-300" : "text-slate-400"}`}>
+                {description}
+              </span>
+            )}
           </button>
         );
       })}
@@ -141,7 +151,20 @@ function SingleToggle({
   );
 }
 
-const BRAND_VOICE_OPTIONS = ["Dark", "Playful", "Raw", "Polished", "Underground", "Glamorous", "DIY", "Cinematic"];
+const BRAND_VOICE_OPTIONS = [
+  { label: "Dark", description: "Moody, intense, serious" },
+  { label: "Playful", description: "Fun, light, doesn't take itself too seriously" },
+  { label: "Raw", description: "Honest, rough, no filter" },
+  { label: "Underground", description: "Cool, low-key, not mainstream" },
+  { label: "Glamorous", description: "Stylish, eye-catching, flashy" },
+  { label: "Polished", description: "Clean, professional, put-together" },
+  { label: "Mysterious", description: "Enigmatic, secretive, keeps distance" },
+  { label: "Bold", description: "Loud, confident, in-your-face" },
+  { label: "Chill", description: "Relaxed, easy-going, laid-back" },
+  { label: "Fierce", description: "Strong, tough, powerful" },
+  { label: "Dreamy", description: "Soft, emotional, imaginative" },
+  { label: "Relatable", description: "Down-to-earth, real, everyday feel" },
+];
 const WORKS_WELL_OPTIONS = ["Organic TikTok", "Local scene", "Email list", "Press", "Collaborations", "Livestreams", "Fan community"];
 const WEAK_OPTIONS = ["Low reach", "No email list", "No visuals/content", "No press contacts", "Budget", "Time"];
 const PROMO_STYLE_OPTIONS = ["Community-first", "Hype / FOMO / scarcity", "PR and media driven", "Guerrilla / low-budget", "Content-heavy / social first"];
@@ -160,6 +183,7 @@ const LEAD_TIME_OPTIONS = [
   { value: "8plus_weeks", label: "8+ weeks" },
 ];
 const GOALS_OPTIONS = ["Grow streaming audience", "Sell out bigger venues", "Grow socials", "Break into new market", "Build email list", "Launch merch line"];
+const PLATFORM_OPTIONS = ["Spotify", "Instagram", "TikTok", "YouTube", "Bandcamp", "SoundCloud", "Apple Music", "Facebook", "Discord", "X", "Own website"];
 
 export default function BandProfileForm({ open, onClose, bandId, onSaved }: BandProfileFormProps) {
   const [profile, setProfile] = useState<BandProfile>(EMPTY_BAND_PROFILE);
@@ -212,13 +236,14 @@ export default function BandProfileForm({ open, onClose, bandId, onSaved }: Band
         if (!b.home_country.trim()) return "Home country is required.";
         if (b.languages.length === 0) return "At least one language is required.";
         if (b.bio.trim().length < 20) return "Bio should be at least 20 characters.";
-        if (b.brand_voice.length === 0) return "Pick at least one brand voice tag.";
+        if (b.brand_voice.length === 0 && !b.brand_voice_other.trim()) return "Pick at least one brand voice tag, or describe your own.";
         return null;
       case 1:
         return null; // all optional except age range, which always has a default
       case 2:
         if (!c.stage) return "Career stage is required.";
-        if (c.previous_releases_count === null) return "Number of previous releases is required (0 is fine).";
+        if (c.released_albums_count === null) return "Number of released albums is required (0 is fine).";
+        if (c.released_singles_count === null) return "Number of released singles is required (0 is fine).";
         return null;
       case 3:
         if (sw.what_works.length === 0) return "Pick at least one thing that works well.";
@@ -370,12 +395,19 @@ export default function BandProfileForm({ open, onClose, bandId, onSaved }: Band
                         onChange={(e) => update("basic_info", { bio: e.target.value })}
                       />
                     </Field>
-                    <Field label="Brand voice / aesthetic (pick 1–4)" required>
+                    <Field label="Brand voice / aesthetic (pick 1–4, or describe your own below)" required>
                       <MultiToggle
                         options={BRAND_VOICE_OPTIONS}
                         selected={profile.basic_info.brand_voice}
                         onToggle={(v) => toggleInArray("basic_info", "brand_voice", v)}
                       />
+                      <div className="mt-2">
+                        <TextInput
+                          value={profile.basic_info.brand_voice_other}
+                          onChange={(e) => update("basic_info", { brand_voice_other: e.target.value })}
+                          placeholder="None of these fit? Describe it in your own words"
+                        />
+                      </div>
                     </Field>
                     <Field label="Content restrictions (things to avoid)">
                       <TextInput
@@ -460,14 +492,26 @@ export default function BandProfileForm({ open, onClose, bandId, onSaved }: Band
                         onSelect={(v) => update("career_stage", { stage: v as any })}
                       />
                     </Field>
-                    <Field label="Number of previous releases" required>
+                    <Field label="Number of released albums" required>
                       <TextInput
                         type="number"
                         min={0}
-                        value={profile.career_stage.previous_releases_count ?? ""}
+                        value={profile.career_stage.released_albums_count ?? ""}
                         onChange={(e) =>
                           update("career_stage", {
-                            previous_releases_count: e.target.value === "" ? null : Number(e.target.value),
+                            released_albums_count: e.target.value === "" ? null : Number(e.target.value),
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="Number of released singles" required>
+                      <TextInput
+                        type="number"
+                        min={0}
+                        value={profile.career_stage.released_singles_count ?? ""}
+                        onChange={(e) =>
+                          update("career_stage", {
+                            released_singles_count: e.target.value === "" ? null : Number(e.target.value),
                           })
                         }
                       />
@@ -479,36 +523,19 @@ export default function BandProfileForm({ open, onClose, bandId, onSaved }: Band
                         placeholder="e.g. 120k streams"
                       />
                     </Field>
-                    <Field label="Release cadence">
-                      <TextInput
-                        value={profile.career_stage.release_cadence}
-                        onChange={(e) => update("career_stage", { release_cadence: e.target.value })}
-                        placeholder="e.g. quarterly, one-off, album-cycle only"
-                      />
-                    </Field>
                     <Field label="Comparable artists">
                       <TagInput
                         value={profile.career_stage.comparable_artists}
                         onChange={(v) => update("career_stage", { comparable_artists: v })}
                       />
                     </Field>
-                    <div className="grid grid-cols-2 gap-2 mb-1">
-                      {([
-                        ["has_manager", "Has manager"],
-                        ["has_booking_agent", "Has booking agent"],
-                        ["has_label", "Has label"],
-                        ["has_pr", "Has PR support"],
-                      ] as const).map(([key, label]) => (
-                        <label key={key} className="flex items-center gap-2 text-xs text-slate-600">
-                          <input
-                            type="checkbox"
-                            checked={profile.career_stage[key]}
-                            onChange={(e) => update("career_stage", { [key]: e.target.checked } as any)}
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
+                    <Field label="Which platforms are you on?">
+                      <MultiToggle
+                        options={PLATFORM_OPTIONS}
+                        selected={profile.career_stage.platforms}
+                        onToggle={(v) => toggleInArray("career_stage", "platforms", v)}
+                      />
+                    </Field>
                   </>
                 )}
 

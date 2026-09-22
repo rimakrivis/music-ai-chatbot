@@ -18,7 +18,7 @@ alter table bands
 --   "basic_info": {
 --     "artist_name": str, "primary_genre": str, "sub_genres": [str],
 --     "home_country": str, "main_markets": [str], "languages": [str],
---     "bio": str, "brand_voice": [str],
+--     "bio": str, "brand_voice": [str], "brand_voice_other": str,
 --     "social_handles": {"instagram": str, "tiktok": str, "spotify": str, "youtube": str},
 --     "content_restrictions": str
 --   },
@@ -31,11 +31,11 @@ alter table bands
 --   },
 --   "career_stage": {
 --     "stage": "emerging" | "mid_level" | "established",
---     "previous_releases_count": int, "best_release_performance": str,
+--     "released_albums_count": int, "released_singles_count": int,
+--     "best_release_performance": str,
 --     "live_shows": [{"city": str, "attendance": int | null, "venue_size": str}],
---     "has_manager": bool, "has_booking_agent": bool,
---     "has_label": bool, "label_name": str | null, "has_pr": bool,
---     "release_cadence": str, "comparable_artists": [str]
+--     "platforms": [str],  -- e.g. Spotify, Instagram, TikTok, Bandcamp, own website
+--     "comparable_artists": [str]
 --   },
 --   "strengths_weaknesses": {
 --     "what_works": [str], "what_works_other": str | null,
