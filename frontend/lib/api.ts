@@ -71,9 +71,10 @@ export async function sendMessage(
   audio_features?: Record<string, unknown>,
   projectType?: string | null,
   band_id?: string | null,
-  project_id?: number | null
+  project_id?: number | null,
+  profile_updated?: boolean
 ): Promise<ChatResponse> {
-  console.log("[api] sendMessage →", { video_id, message, session_id, projectType, band_id, project_id });
+  console.log("[api] sendMessage →", { video_id, message, session_id, projectType, band_id, project_id, profile_updated });
   if (audio_features) {
     console.log("[api] sendMessage — audio_features included:", audio_features);
   }
@@ -90,6 +91,7 @@ export async function sendMessage(
       project_type: projectType ?? null,
       band_id: band_id ?? null,
       project_id: project_id ?? null,  // ← NEW: specific project instance for memory isolation
+      profile_updated: profile_updated ?? false,
     }),
   });
   if (!res.ok) {

@@ -17,8 +17,7 @@ from tools.find_release_timing import find_release_timing
 from tools.search_marketing_knowledge import search_marketing_knowledge
 
 from config import OPENAI_API_KEY, XAI_API_KEY, GROK_MODEL, GROK_REASONING_EFFORT, GROK_TEMPERATURE
-from database import get_project
-from project_context import format_details_block, format_band_profile_block
+from project_context import fetch_non_release_context, format_details_block, format_band_profile_block
 from request_context import current_source_key
 
 # ---------------------------------------------------------------------------
@@ -249,6 +248,7 @@ async def run_agent(
     project_type: str = None,
     band_id: str = None,
     project_id: int = None,
+    profile_updated: bool = False,
 ) -> dict:
 
     print(f"\n💬 [run_agent] Session: {session_id} | Video: {video_id} | project_type: {project_type}")
@@ -286,28 +286,28 @@ async def run_agent(
         or not existing.get("channel_values", {}).get("messages")
     )
 
-    needs_context_injection = is_first_turn or (genre_data and genre_data.get("top_genres"))
+    needs_context_injection = (
+        is_first_turn
+        or (genre_data and genre_data.get("top_genres"))
+        or profile_updated
+    )
 
     if needs_context_injection:
-        # Only fetch project_details (a Supabase round trip) on turns that
-        # actually need a system prompt built — avoids hitting the DB on
-        # every single message of a long conversation.
-        project_details = None
-        if project_type and project_type not in RELEASE_PROJECT_TYPES and project_id is not None:
-            try:
-                project_row = await get_project(project_id)
-                if project_row:
-                    project_details = project_row.get("details") or {}
-                    print(f"   📋 Project details loaded: {project_details}")
-                else:
-                    print(f"   ⚠️ No project row found for project_id={project_id}")
-            except Exception as e:
-                print(f"   ⚠️ Could not load project details: {e}")
-                project_details = None
+        # Only fetch project_details/band_profile (Supabase round trips) on
+        # turns that actually need a system prompt built — avoids hitting
+        # the DB on every single message of a long conversation. Fetched
+        # for any project type now (not just non-release) — band context is
+        # useful for release plans too.
+        ctx = await fetch_non_release_context(project_id, band_id)
+        project_details = ctx["project_details"]
+        band_profile = ctx["band_profile"]
+        print(f"   📋 Project details loaded: {project_details}")
+        print(f"   🎤 Band profile loaded: {'yes' if band_profile else 'no'}")
 
         context_block = _build_prompt(
             project_type=project_type or "single_release",
             project_details=project_details,
+            band_profile=band_profile,
             video_id=video_id,
             video_title=video_title,
             video_channel=video_channel,
@@ -324,6 +324,8 @@ async def run_agent(
 
         if is_first_turn:
             print("   📌 First turn — injecting system context")
+        elif profile_updated:
+            print("   🎤 Band profile just updated — re-injecting system context")
         else:
             print("   🔄 Genre data available — re-injecting system context")
     else:

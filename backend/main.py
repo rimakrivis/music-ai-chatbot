@@ -110,6 +110,9 @@ class ChatRequest(BaseModel):
     project_id: int | None = None        # NEW — specific project instance (e.g. one concert out
                                           # of several); optional until Step 2's Concert UI creates
                                           # projects and starts passing this through
+    profile_updated: bool = False        # true on the message right after the band profile was
+                                          # saved — forces a fresh system-prompt rebuild so the
+                                          # agent picks up the edit instead of using the old one
 
 
 class CreateProjectRequest(BaseModel):
@@ -712,6 +715,7 @@ async def chat(request: ChatRequest):
             project_type=project_type,
             band_id=request.band_id,
             project_id=project_id,
+            profile_updated=request.profile_updated,
         )
 
         tasks = await extract_tasks_from_response(result["response"])

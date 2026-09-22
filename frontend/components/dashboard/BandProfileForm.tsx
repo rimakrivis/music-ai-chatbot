@@ -8,6 +8,7 @@ interface BandProfileFormProps {
   open: boolean;
   onClose: () => void;
   bandId: string;
+  onSaved?: () => void;
 }
 
 const STEP_LABELS = [
@@ -160,7 +161,7 @@ const LEAD_TIME_OPTIONS = [
 ];
 const GOALS_OPTIONS = ["Grow streaming audience", "Sell out bigger venues", "Grow socials", "Break into new market", "Build email list", "Launch merch line"];
 
-export default function BandProfileForm({ open, onClose, bandId }: BandProfileFormProps) {
+export default function BandProfileForm({ open, onClose, bandId, onSaved }: BandProfileFormProps) {
   const [profile, setProfile] = useState<BandProfile>(EMPTY_BAND_PROFILE);
   const [status, setStatus] = useState<BandProfileStatus>("empty");
   const [step, setStep] = useState(0);
@@ -247,6 +248,7 @@ export default function BandProfileForm({ open, onClose, bandId }: BandProfileFo
     try {
       await updateBandProfile(bandId, profile, finalStatus === "complete" ? "complete" : "draft");
       setStatus(finalStatus === "complete" ? "complete" : "draft");
+      onSaved?.();
     } catch (err) {
       console.error("[BandProfileForm] Failed to save profile", err);
       setError("Couldn't save — check your connection and try again.");

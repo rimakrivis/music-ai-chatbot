@@ -62,6 +62,12 @@ export default function DashboardPage() {
   // effect below skips its "reset chat + fetch project" side effects — those
   // are only meant for the user manually clicking a project type button.
   const skipNextProjectEffectRef = useRef(false);
+
+  // Set true when the band profile is saved; the next chat message sends
+  // it so the backend rebuilds the system prompt with the fresh profile
+  // instead of the one from earlier in the conversation. Cleared after
+  // that one message — a normal one-shot flag, not a standing setting.
+  const profileJustUpdatedRef = useRef(false);
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
@@ -351,6 +357,9 @@ export default function DashboardPage() {
       // projectType, bandId, and currentProjectId are now threaded through to
       // lib/api.ts's sendMessage(), which forwards them to the backend as
       // `project_type` / `band_id` / `project_id`.
+      const profileUpdated = profileJustUpdatedRef.current;
+      profileJustUpdatedRef.current = false;
+
       const data = await sendMessage(
         videoInfo?.video_id ?? "",
         message,
@@ -361,6 +370,7 @@ export default function DashboardPage() {
         projectType,
         bandId,
         currentProjectId,
+        profileUpdated,
       );
 
       try {
@@ -520,6 +530,7 @@ export default function DashboardPage() {
         open={bandProfileOpen}
         onClose={() => setBandProfileOpen(false)}
         bandId={bandId}
+        onSaved={() => { profileJustUpdatedRef.current = true; }}
       />
 
       <AddToCalendarModal
