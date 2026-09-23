@@ -199,7 +199,15 @@ export default function BandProfileForm({ open, onClose, bandId, onSaved }: Band
     getBandProfile(bandId)
       .then(({ profile: saved, status: savedStatus }) => {
         if (saved && Object.keys(saved).length > 0) {
-          setProfile({ ...EMPTY_BAND_PROFILE, ...saved } as BandProfile);
+          const savedProfile = saved as Partial<BandProfile>;
+          setProfile({
+            basic_info: { ...EMPTY_BAND_PROFILE.basic_info, ...savedProfile.basic_info },
+            audience_platform: { ...EMPTY_BAND_PROFILE.audience_platform, ...savedProfile.audience_platform },
+            career_stage: { ...EMPTY_BAND_PROFILE.career_stage, ...savedProfile.career_stage },
+            strengths_weaknesses: { ...EMPTY_BAND_PROFILE.strengths_weaknesses, ...savedProfile.strengths_weaknesses },
+            practical_preferences: { ...EMPTY_BAND_PROFILE.practical_preferences, ...savedProfile.practical_preferences },
+            goals: { ...EMPTY_BAND_PROFILE.goals, ...savedProfile.goals },
+          });
         }
         setStatus(savedStatus);
         // Resume where they left off rather than restarting at step 0.
