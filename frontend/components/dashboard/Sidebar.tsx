@@ -18,6 +18,8 @@ interface SidebarProps {
   onShowAgenda: () => void;
   onOpenAddEventModal: () => void;
   onReset: () => void;
+  mobileNavOpen: boolean;
+  onCloseMobileNav: () => void;
 }
 
 // Sections that expand downward. Only one of Calendar/Progress/Projects is
@@ -37,6 +39,13 @@ function IconAgenda({ active }: { active?: boolean }) {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={active ? "#ffffff" : "#475569"} strokeWidth="1.5">
       <rect x="3" y="4" width="18" height="17" rx="2" />
       <path d="M3 9h18M8 3v3M16 3v3" />
+    </svg>
+  );
+}
+function IconClose() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2">
+      <path d="M18 6 6 18M6 6l12 12" />
     </svg>
   );
 }
@@ -111,6 +120,8 @@ export default function Sidebar({
   onShowAgenda,
   onOpenAddEventModal,
   onReset,
+  mobileNavOpen,
+  onCloseMobileNav,
 }: SidebarProps) {
   // null = auto (CSS decides: icon-only at tablet widths, expanded at desktop),
   // true/false = user has explicitly overridden the toggle at any width.
@@ -133,10 +144,10 @@ export default function Sidebar({
 
   const widthClass =
     manualOverride === true
-      ? "w-full md:w-[68px]"
+      ? "w-[280px] md:w-[68px]"
       : manualOverride === false
-      ? "w-full md:w-[320px]"
-      : "w-full md:w-[68px] lg:w-[320px]";
+      ? "w-[280px] md:w-[320px]"
+      : "w-[280px] md:w-[68px] lg:w-[320px]";
 
   // Label/body visibility mirrors widthClass so icon-only sections stay
   // mounted (just hidden) instead of unmounting per breakpoint.
@@ -157,19 +168,39 @@ export default function Sidebar({
     "flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors w-full text-left";
 
   return (
-    <aside
-      className={`flex flex-col bg-white border-b md:border-b-0 md:border-r border-slate-200 p-3.5 md:h-full md:overflow-y-auto transition-[width] shrink-0 ${widthClass}`}
-    >
-      <button
-        type="button"
-        onClick={handleToggle}
-        className="p-2 rounded-xl hover:bg-slate-50 transition-colors mb-2 self-start"
-        title="Toggle sidebar"
+    <>
+      {/* Backdrop — mobile nav drawer only; Sidebar is static in-flow at md:+ */}
+      {mobileNavOpen && (
+        <div
+          onClick={onCloseMobileNav}
+          className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40 md:hidden"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex flex-col bg-white border-r border-slate-200 p-3.5 h-full overflow-y-auto transition-[width,transform] duration-300 ease-out shrink-0 ${widthClass} ${
+          mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+        } md:static md:z-auto md:translate-x-0`}
       >
-        <IconMenu />
-      </button>
+        <div className="flex items-center justify-between mb-2">
+          <button
+            type="button"
+            onClick={handleToggle}
+            className="hidden md:inline-flex p-2 rounded-xl hover:bg-slate-50 transition-colors self-start"
+            title="Toggle sidebar"
+          >
+            <IconMenu />
+          </button>
+          <button
+            type="button"
+            onClick={onCloseMobileNav}
+            className="md:hidden p-2 rounded-xl hover:bg-slate-50 transition-colors self-start ml-auto"
+            title="Close menu"
+          >
+            <IconClose />
+          </button>
+        </div>
 
-      {/* Agenda — shows every task for the band. Active whenever no project
+        {/* Agenda — shows every task for the band. Active whenever no project
           type is selected; clicking it clears the project filter. */}
       <button
         type="button"
@@ -290,6 +321,7 @@ export default function Sidebar({
         <IconReset />
         <span className={labelClass}>reset</span>
       </button>
-    </aside>
+      </aside>
+    </>
   );
 }

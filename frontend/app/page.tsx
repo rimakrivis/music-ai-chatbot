@@ -85,6 +85,12 @@ export default function DashboardPage() {
   const [bandProfileOpen, setBandProfileOpen] = useState(false);
   const [addEventModalOpen, setAddEventModalOpen] = useState(false);
 
+  // Mobile-only (<md): which full-screen pane is showing, and whether the
+  // nav drawer is open. Both are no-ops at md:+ — main/aside stay visible
+  // side-by-side there via md: overrides, same as Sidebar's own width/label state.
+  const [mobileView, setMobileView] = useState<"content" | "chat">("chat");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
   const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   const loadFromSupabase = useCallback(async () => {
@@ -341,6 +347,14 @@ export default function DashboardPage() {
       prev.map((m, i) => (i === msgIndex ? { ...m, tasksConfirmed: true } : m))
     );
     loadFromSupabase();
+
+    // Phone only — desktop already shows chat and agenda side by side, so
+    // forcing the filter there would interrupt whatever the user was doing.
+    const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 767.98px)").matches;
+    if (isMobile) {
+      setProjectType(null);
+      setMobileView("content");
+    }
   }
 
   function handleTaskDismiss(msgIndex: number) {
@@ -440,21 +454,59 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col md:flex-row md:h-screen md:overflow-hidden bg-[#f7f5f2]">
 
+      {/* Mobile-only top bar: hamburger opens the nav drawer, pill toggles
+          between the Agenda and Chat full-screen views. Inert at md:+. */}
+      <div className="md:hidden sticky top-0 z-30 flex items-center justify-between bg-white border-b border-slate-200 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          className="p-2 -ml-2 rounded-xl hover:bg-slate-50 transition-colors"
+          title="Open menu"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="1.5">
+            <path d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        <div className="flex items-center gap-1 bg-slate-100 rounded-full p-0.5">
+          <button
+            type="button"
+            onClick={() => setMobileView("content")}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              mobileView === "content" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+            }`}
+          >
+            Agenda
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileView("chat")}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              mobileView === "chat" ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+            }`}
+          >
+            Chat
+          </button>
+        </div>
+      </div>
+
       <Sidebar
         events={visibleEvents}
         onEventClick={handleEventClick}
         progress={progressPercent}
         todos={visibleTodos}
-        onOpenTodoDrawer={() => setTodoDrawerOpen(true)}
-        onOpenBandProfile={() => setBandProfileOpen(true)}
+        onOpenTodoDrawer={() => { setTodoDrawerOpen(true); setMobileNavOpen(false); }}
+        onOpenBandProfile={() => { setBandProfileOpen(true); setMobileNavOpen(false); }}
         activeProjectType={projectType}
-        onSelectProjectType={setProjectType}
-        onShowAgenda={() => setProjectType(null)}
-        onOpenAddEventModal={() => setAddEventModalOpen(true)}
-        onReset={handleReset}
+        onSelectProjectType={(type) => { setProjectType(type); setMobileView("chat"); setMobileNavOpen(false); }}
+        onShowAgenda={() => { setProjectType(null); setMobileView("content"); setMobileNavOpen(false); }}
+        onOpenAddEventModal={() => { setAddEventModalOpen(true); setMobileNavOpen(false); }}
+        onReset={() => { handleReset(); setMobileNavOpen(false); }}
+        mobileNavOpen={mobileNavOpen}
+        onCloseMobileNav={() => setMobileNavOpen(false)}
       />
 
-      <main className="flex-1 min-w-0 md:h-full md:overflow-y-auto bg-[#f7f5f2] px-4 py-6 md:px-6 md:py-8 lg:px-10">
+      <main className={`${mobileView === "content" ? "block" : "hidden"} md:block flex-1 min-w-0 md:h-full md:overflow-y-auto bg-[#f7f5f2] px-4 py-6 md:px-6 md:py-8 lg:px-10`}>
         {visibleEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
             <span className="text-5xl">🎵</span>
@@ -470,8 +522,8 @@ export default function DashboardPage() {
         )}
       </main>
 
-      <aside className="flex flex-col w-full md:w-[320px] lg:w-[380px] md:h-full md:overflow-hidden bg-white border-t md:border-t-0 md:border-l border-slate-200 shrink-0">
-        {(projectType === "single_release" || projectType === "album_release") && (
+      <aside className={`${mobileView === "chat" ? "flex" : "hidden"} flex-col w-full md:w-[320px] lg:w-[380px] md:h-full md:overflow-hidden bg-white md:border-l border-slate-200 shrink-0 md:flex`}>
+        {projectType === "single_release" && (
           <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
         )}
         {projectType === "concert" && currentProjectId && (
