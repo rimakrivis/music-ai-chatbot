@@ -59,6 +59,7 @@ NAMESPACE = "marketing_knowledge"
 SOURCES = [
     {"filename": "marketing_knowledge.md", "source_key": "marketing_dist"},
     {"filename": "marketing_knowledge_concert.md", "source_key": "concert"},
+    {"filename": "marketing_knowledge_social_campaign.md", "source_key": "social_campaign"},
 ]
 
 # -------------------------------------------------------

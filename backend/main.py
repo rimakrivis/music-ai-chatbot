@@ -546,8 +546,8 @@ async def extract_tasks_from_response(response_text: str) -> dict:
 
     Returns:
         {
-            "calendar_events": [{"title": str, "date": str, "type": str}, ...],
-            "todo_items":      [{"title": str, "due_date": str | None}, ...]
+            "calendar_events": [{"title": str, "date": str, "type": str, "description": str}, ...],
+            "todo_items":      [{"title": str, "due_date": str | None, "description": str}, ...]
         }
     """
     print("   🗂️ [extract_tasks] Extracting tasks from response...")
@@ -556,15 +556,15 @@ async def extract_tasks_from_response(response_text: str) -> dict:
 
     system_prompt = f"""You are a task extraction assistant. Today's date is {today}.
 
-The input is a plan checklist (release, concert, campaign, or other project type). Every line that starts with "[ ]" is a task. Extract ALL of them without exception.
+The input is a plan checklist (release, concert, campaign, or other project type). Every line that starts with "[ ]" is a task; it may be followed by an "Idea:" line with a one-sentence description of that specific task. Extract ALL of them without exception.
 
 Return ONLY valid JSON — no markdown, no backticks, no explanation:
 {{
   "calendar_events": [
-    {{"title": "string", "date": "YYYY-MM-DD", "type": "release|deadline|promo|spotify|youtube|social_media|general"}}
+    {{"title": "string", "date": "YYYY-MM-DD", "type": "release|deadline|promo|spotify|youtube|social_media|general", "description": "string"}}
   ],
   "todo_items": [
-    {{"title": "string", "due_date": "YYYY-MM-DD or null"}}
+    {{"title": "string", "due_date": "YYYY-MM-DD or null", "description": "string"}}
   ]
 }}
 
@@ -573,8 +573,10 @@ Rules:
 - Each [ ] line becomes both a calendar_event AND a todo_item
 - The date is the YYYY-MM-DD value on that line
 - The type is the last word on that line — map it exactly: deadline, release, spotify, youtube, social_media, general, promo
+- description = the "Idea:" line immediately under that [ ] line, with the "Idea:" prefix stripped. If there's no "Idea:" line for that task, use "" (empty string) — never invent one
 - todo_item title = same as calendar_event title
 - todo_item due_date = same date as calendar_event
+- todo_item description = same as calendar_event description
 - If no [ ] lines found, return {{"calendar_events": [], "todo_items": []}}"""
 
     try:
@@ -583,10 +585,10 @@ Rules:
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": response_text[:3000]},
+                {"role": "user", "content": response_text[:6000]},
             ],
             temperature=0,
-            max_tokens=2000,
+            max_tokens=3000,
         )
         raw = completion.choices[0].message.content.strip()
         print(f"   🗂️ [extract_tasks] Raw response: {raw[:120]}...")

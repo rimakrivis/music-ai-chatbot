@@ -108,6 +108,7 @@ export default function DashboardPage() {
           ? eventsData.events.map((e: any) => ({
               id: e.id,
               title: e.title,
+              description: e.description ?? "",
               date: e.date,
               type: e.type,
               completed: e.status === "done",
@@ -122,6 +123,7 @@ export default function DashboardPage() {
           ? todosData.items.map((t: any) => ({
               id: t.id,
               title: t.title,
+              description: t.description ?? "",
               completed: t.status === "done",
               linkedEventId: t.linked_event_id ?? undefined,
               projectId: t.project_id ?? null,
@@ -274,6 +276,7 @@ export default function DashboardPage() {
       setSelectedEvent({
         id: -(todo.id),
         title: todo.title,
+        description: todo.description ?? "",
         date: "",
         type: "general",
         savedContent: "",

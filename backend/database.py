@@ -261,6 +261,7 @@ async def save_calendar_events(
                 "title": event["title"],
                 "date": event["date"],
                 "type": event.get("type", "general"),
+                "description": event.get("description", ""),
             }
             for event in events
         ]
@@ -361,6 +362,7 @@ async def save_todos(
                 "project_id": project_id,
                 "title": item["title"],
                 "due_date": item.get("due_date"),
+                "description": item.get("description", ""),
             }
             for item in items
         ]

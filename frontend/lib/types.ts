@@ -13,14 +13,15 @@ export interface CalendarEvent {
 export interface TodoItem {
   id: number;
   title: string;
+  description?: string;
   completed: boolean;
   linkedEventId?: number;
   projectId?: number | null;
 }
 
 export interface ExtractedTasks {
-  calendar_events: { title: string; date: string; type: string }[];
-  todo_items: { title: string; due_date: string | null }[];
+  calendar_events: { title: string; date: string; type: string; description?: string }[];
+  todo_items: { title: string; due_date: string | null; description?: string }[];
 }
 
 export interface ChatMessage {

@@ -83,7 +83,7 @@ PROJECT_TYPE_CONFIG = {
     "single_release":  {"knowledge_source": "marketing_dist", "anchor_date_label": "release date"},
     "album_release":   {"knowledge_source": "marketing_dist", "anchor_date_label": "release date"},
     "concert":         {"knowledge_source": "concert",        "anchor_date_label": "concert date"},
-    "social_campaign": {"knowledge_source": None,              "anchor_date_label": "campaign launch date"},
+    "social_campaign": {"knowledge_source": "social_campaign", "anchor_date_label": "campaign launch date"},
     "other":           {"knowledge_source": None,              "anchor_date_label": "the date this project revolves around"},
 }
 
@@ -92,6 +92,30 @@ PROJECT_TYPE_CONFIG = {
 # Not used for prompt structure or knowledge filtering anymore — those come
 # from PROJECT_TYPE_CONFIG above.
 RELEASE_PROJECT_TYPES = {"single_release", "album_release"}
+
+# Social-campaign creative treatment per brand_voice tag (mirrors
+# frontend/components/dashboard/BandProfileForm.tsx's BRAND_VOICE_OPTIONS
+# labels exactly — must match 1:1 for the lookup in _build_prompt to work).
+# Injected directly into the prompt for social_campaign projects rather than
+# stored as searchable knowledge: there are only 12, always the same
+# regardless of which campaign was picked, so putting them in Pinecone would
+# mean hoping a search surfaces the right one — putting them here means the
+# agent always has them, at zero retrieval risk, the same way the band
+# profile itself is always included.
+SOCIAL_CAMPAIGN_STYLE_GUIDE = {
+    "Dark": "Low light, cinematic framing, restrained text, serious hooks; fewer but stronger posts; prioritize Reel/TikTok and atmospheric Stories.",
+    "Playful": "Bright energy, humor, quick cuts, polls, memes and playful captions; prioritize short video and interactive Stories.",
+    "Raw": "Phone-camera feel, imperfections, direct talking, rehearsal mistakes and unfiltered captions; avoid over-editing.",
+    "Underground": "Low-key visuals, grain/texture, insider language, minimal CTAs; favor intimate Reels, BTS and selective Stories.",
+    "Glamorous": "Fashion-forward visuals, polished locations, strong photography, dramatic transitions; prioritize Reels and carousels.",
+    "Polished": "Clear branding, consistent typography, clean editing, strong hooks and professional performance/BTS footage.",
+    "Mysterious": "Reveal information gradually, use clues, cropped visuals, unanswered questions and pauses; Stories are useful for breadcrumbs.",
+    "Bold": "Large hooks, high energy, confident language, strong performance and direct CTAs; frequent short-form video.",
+    "Chill": "Casual phone footage, relaxed pacing, everyday moments, conversational captions; Stories and vlogs work well.",
+    "Fierce": "Strong performance, assertive hooks, powerful close-ups, decisive language and high-impact editing.",
+    "Dreamy": "Soft visuals, emotional voiceovers, atmospheric performance, poetic text and slower pacing.",
+    "Relatable": "Everyday situations, humor, honest struggles, ordinary locations and conversational language; make the artist feel accessible.",
+}
 
 
 def resolve_source_key(project_type: str | None) -> str | None:
@@ -170,13 +194,75 @@ GENRE & SOUND PROFILE (pre-detected by Essentia — do not re-analyze):
 {genre_block}
 """
 
+    social_campaign_block = ""
+    if project_type == "social_campaign":
+        basic_info = (band_profile or {}).get("basic_info") or {}
+        brand_voice_tags = [t for t in (basic_info.get("brand_voice") or []) if t in SOCIAL_CAMPAIGN_STYLE_GUIDE]
+        brand_voice_other = (basic_info.get("brand_voice_other") or "").strip()
+
+        if brand_voice_tags or brand_voice_other:
+            style_lines = "\n".join(f"- {tag}: {SOCIAL_CAMPAIGN_STYLE_GUIDE[tag]}" for tag in brand_voice_tags)
+            style_guidance = "THIS BAND'S CREATIVE STYLE:\n"
+            if style_lines:
+                style_guidance += style_lines + "\n"
+            if brand_voice_other:
+                style_guidance += f'- In the band\'s own words: "{brand_voice_other}"\n'
+            style_guidance += (
+                "Apply this treatment to whichever campaign you select — visual tone, pacing, "
+                "caption voice, CTA intensity, how much is revealed at once. If more than one "
+                "is set, blend them, leaning toward whichever fits the specific campaign best. "
+                "The band's own words (if given) are the most specific signal — let them refine "
+                "or override the preset description where they differ."
+            )
+        else:
+            style_guidance = (
+                "THIS BAND'S CREATIVE STYLE: not set. Don't block the plan on it — apply a "
+                "clean, general-audience treatment, and mention once that setting a brand voice "
+                "in the band profile would let future campaigns match their style more "
+                "specifically."
+            )
+
+        social_campaign_block = f"""
+BRAINSTORM MODE — triggered when the user asks for ideas, inspiration, options, or "what
+could we do" for a social campaign — NOT yet asking for a full plan:
+- Call search_marketing_knowledge once, naming their stated goal, before responding — even
+  though they didn't say "plan." Never invent campaign ideas from general knowledge; this
+  knowledge base has 60 real campaign types to draw from and the answer should come from
+  there, not be made up.
+- Respond like a person brainstorming out loud, not a report: 3-4 options only, each just a
+  short name plus a few words on the angle — no timelines, no full description, no "Base
+  rollout" detail yet. Keep the whole reply short enough to read in a few seconds.
+- End by asking which one they want to go with, or if they'd like different ones.
+- Only once they pick one (by name, number, or description — a plain reply like "the
+  rehearsal one" or "#2" counts) or ask you to expand it does this become a real plan request
+  — then follow PLAN MODE above: ask for the campaign launch date if it's missing, then
+  output the full checklist for that one campaign only.
+
+SOCIAL CAMPAIGN PLANNING (once a specific campaign is being built into a real plan) —
+search_marketing_knowledge automatically includes the campaign execution rules alongside
+whatever you search for, so one call naming the campaign goal/type (e.g. "campaign to revive
+an old song") is enough — you don't need to search separately for timing rules. Never search
+the knowledge base for rollout style; it isn't stored there.
+
+{style_guidance}
+"""
+
     return f"""You are DropOperator — a marketing planner for musicians and bands.
+
+FORMATTING — the chat UI renders markdown, so write it, not plain unbroken prose:
+- **Bold** campaign/idea names and other key terms so they stand out at a glance.
+- Use "- " or "1. " list syntax (one item per line) whenever you're presenting more than one
+  option, idea, or step — never comma-or-number-run them together in a single paragraph.
+- Break distinct thoughts into short paragraphs (blank line between them) instead of one
+  dense block of text.
+- Skip all of this for a single short sentence — formatting is for structure, not decoration.
 
 CURRENT PROJECT TYPE: {project_type}
 TODAY: {today}
 {track_block}
 {details_block}
 {band_block}
+{social_campaign_block}
 
 PLAN MODE — triggered when the user asks for a plan, strategy, or rollout:
 1. If no {anchor_label} is known (check PROJECT DETAILS above) → ask for it before proceeding. Never invent a date.
@@ -185,9 +271,14 @@ PLAN MODE — triggered when the user asks for a plan, strategy, or rollout:
 4. Output the plan as a checklist below. No prose before or after — just the checklist.
 
 TASK OUTPUT FORMAT (always, for every checklist line):
-[ ] Task title — YYYY-MM-DD — type
+[ ] Concrete idea as the title — YYYY-MM-DD — type
+Idea: one sentence on exactly what this post/task shows, says, or asks — specific to this band's music/catalog/story, never a generic label.
 where type is one of: release, spotify, youtube, social_media, promo, deadline, general.
-Only lines in this exact format become calendar events / to-dos in the app — anything else you write is just prose and won't be tracked.
+Only "[ ] ... — date — type" lines become calendar events / to-dos in the app; the "Idea:" line under each one is captured too and shown when that task is opened, but write it — anything else is just prose and won't be tracked.
+
+The title itself must be a real, specific content idea — never a generic placeholder like "hook post", "supporting content", "Story teaser", or just the campaign/release name. Retrieved knowledge (checklist structure, campaign type, execution rules) tells you WHEN each task happens and WHAT FORMAT it should be — it does not tell you WHAT IT'S ABOUT. You still have to invent that yourself, using this band's own genre, catalog, brand voice, and project details already in this prompt. Do this even when the knowledge base returned nothing useful — a missing retrieval result is never an excuse for a generic title.
+- If the band's bio/profile mentions specific songs, members, or details: don't mechanically cycle through every one of them so each gets used once across the plan — that reads as formulaic, not creative. Use a specific song/name only where it genuinely fits that particular task; plenty of tasks should be about mood, era, behind-the-scenes process, or fan interaction without naming a specific song at all. Vary it like a person planning content would, not like you're checking items off a list.
+- If the band's profile has little or no bio/catalog detail (no song titles, no member names, nothing specific to reference): do NOT invent or guess at fake song titles, member names, or facts to sound specific — that's fabrication. Instead make the idea concrete in a different way: specific about the ACTION, FORMAT, and ANGLE (e.g. "post a raw rehearsal clip with the band cracking up mid-take" is still a real idea without needing a made-up song title). Only use a real detail (song, name, place, date) when it actually came from this band's own profile or the conversation.
 
 FOLLOW-UP MODE — triggered by any message after a plan has already been shown:
 - Answer the question directly. No plan regeneration.
