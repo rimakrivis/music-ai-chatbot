@@ -452,11 +452,11 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="flex flex-col md:flex-row md:h-screen md:overflow-hidden bg-[#f7f5f2]">
+    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[#f7f5f2]">
 
       {/* Mobile-only top bar: hamburger opens the nav drawer, pill toggles
           between the Agenda and Chat full-screen views. Inert at md:+. */}
-      <div className="md:hidden sticky top-0 z-30 flex items-center justify-between bg-white border-b border-slate-200 px-4 py-3">
+      <div className="md:hidden shrink-0 z-30 flex items-center justify-between bg-white border-b border-slate-200 px-4 py-3">
         <button
           type="button"
           onClick={() => setMobileNavOpen(true)}
@@ -506,11 +506,19 @@ export default function DashboardPage() {
         onCloseMobileNav={() => setMobileNavOpen(false)}
       />
 
-      <main className={`${mobileView === "content" ? "block" : "hidden"} md:block flex-1 min-w-0 md:h-full md:overflow-y-auto bg-[#f7f5f2] px-4 py-6 md:px-6 md:py-8 lg:px-10`}>
+      <main className={`${mobileView === "content" ? "block" : "hidden"} md:block flex-1 min-h-0 min-w-0 overflow-y-auto bg-[#f7f5f2] px-4 py-6 md:px-6 md:py-8 lg:px-10`}>
         {visibleEvents.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
-            <span className="text-5xl">🎵</span>
-            <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
+          <div className="flex flex-col items-center justify-center h-full text-center gap-4">
+            <h2
+              className="uppercase font-bold leading-none tracking-tight text-6xl md:text-7xl lg:text-8xl"
+              style={{ WebkitTextStroke: "1.5px #0f172a", color: "#f7f5f2" }}
+            >
+              <span className="block">Dream it</span>
+              <span className="block">Map it</span>
+              <span className="block">Make it</span>
+              <span className="block">Sound</span>
+            </h2>
+            <p className="text-sm text-slate-400">Great music begins with a clear plan.</p>
           </div>
         ) : (
           <DailyFeed
@@ -522,7 +530,7 @@ export default function DashboardPage() {
         )}
       </main>
 
-      <aside className={`${mobileView === "chat" ? "flex" : "hidden"} flex-col w-full md:w-[320px] lg:w-[380px] md:h-full md:overflow-hidden bg-white md:border-l border-slate-200 shrink-0 md:flex`}>
+      <aside className={`${mobileView === "chat" ? "flex" : "hidden"} flex-col flex-1 md:flex-none min-h-0 w-full md:w-[320px] lg:w-[380px] overflow-hidden bg-white md:border-l border-slate-200 shrink-0 md:flex`}>
         {projectType === "single_release" && (
           <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
         )}

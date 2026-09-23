@@ -38,7 +38,7 @@ export default function AIChatbot({ messages, onSendMessage, isLoading = false, 
   };
 
   return (
-    <div className="flex flex-col h-[420px] md:h-auto md:flex-1 md:min-h-0">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
       <div className="p-4 border-b border-slate-100 shrink-0">
         <h3 className="text-slate-800 font-semibold text-base">AI Agent Chatbot</h3>
