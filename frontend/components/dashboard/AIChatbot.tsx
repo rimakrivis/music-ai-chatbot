@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { ChatMessage } from "@/lib/types";
+import AssistantMessageContent from "./AssistantMessageContent";
 
 interface AIChatbotProps {
   messages: ChatMessage[];
@@ -61,7 +62,7 @@ export default function AIChatbot({ messages, onSendMessage, isLoading = false, 
               )}
               {msg.role === "assistant" && !msg.tasks && (
                 <div className="rounded-xl px-3 py-2 text-sm max-w-[85%] bg-slate-50 border border-slate-200 text-slate-700">
-                  {msg.content}
+                  <AssistantMessageContent content={msg.content} />
                 </div>
               )}
             </div>

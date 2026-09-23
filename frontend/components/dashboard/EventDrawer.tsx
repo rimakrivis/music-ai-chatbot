@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { CalendarEvent, EVENT_COLORS, ChatMessage } from "@/lib/types";
+import AssistantMessageContent from "./AssistantMessageContent";
 
 const XIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
@@ -85,7 +86,9 @@ export default function EventDrawer({
       setMessages([
         {
           role: "assistant",
-          content: `${event.title} — what do you need? A post, pitch, email, or ideas?`
+          content: event.description?.trim()
+            ? event.description
+            : `${event.title} — what do you need? A post, pitch, email, or ideas?`
         },
       ]);
     } else {
@@ -253,7 +256,11 @@ export default function EventDrawer({
                       : "bg-slate-100 text-slate-700 rounded-bl-sm"
                     }`}
                 >
-                  <p className="whitespace-pre-line">{msg.content}</p>
+                  {msg.role === "assistant" ? (
+                    <AssistantMessageContent content={msg.content} />
+                  ) : (
+                    <p className="whitespace-pre-line">{msg.content}</p>
+                  )}
                 </div>
               </div>
             ))}
