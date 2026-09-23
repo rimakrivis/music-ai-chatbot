@@ -133,7 +133,7 @@ export default function MiniCalendar({ dotDates = [], events = [], onEventClick 
   };
 
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 relative">
+    <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 relative">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-slate-800 font-semibold text-lg">{monthName}</h2>
@@ -165,7 +165,7 @@ export default function MiniCalendar({ dotDates = [], events = [], onEventClick 
       {/* Calendar grid */}
       <div className="grid grid-cols-7 gap-1">
         {prevDays.map((day) => (
-          <div key={`prev-${day}`} className="flex flex-col items-center justify-center h-9 text-slate-300 text-sm">
+          <div key={`prev-${day}`} className="flex flex-col items-center justify-center aspect-square w-full text-slate-300 text-sm">
             {day}
           </div>
         ))}
@@ -179,7 +179,7 @@ export default function MiniCalendar({ dotDates = [], events = [], onEventClick 
             <button
               key={day}
               onClick={() => handleDayClick(day)}
-              className={`relative flex flex-col items-center justify-center h-9 text-sm rounded-full transition-all
+              className={`relative flex flex-col items-center justify-center aspect-square w-full text-sm rounded-full transition-all
                 ${isSelected
                   ? "bg-red-500 text-white font-medium"
                   : hasEvents
@@ -196,7 +196,7 @@ export default function MiniCalendar({ dotDates = [], events = [], onEventClick 
         })}
 
         {nextDays.map((day) => (
-          <div key={`next-${day}`} className="flex flex-col items-center justify-center h-9 text-slate-300 text-sm">
+          <div key={`next-${day}`} className="flex flex-col items-center justify-center aspect-square w-full text-slate-300 text-sm">
             {day}
           </div>
         ))}

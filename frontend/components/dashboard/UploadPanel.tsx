@@ -21,6 +21,12 @@ const SpinnerIcon = () => (
   </svg>
 );
 
+const ChevronIcon = ({ direction }: { direction: "down" | "right" }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2">
+    {direction === "down" ? <path d="M6 9l6 6 6-6" /> : <path d="M9 6l6 6-6 6" />}
+  </svg>
+);
+
 interface UploadPanelProps {
   onVideoLoaded: (video: AnalyzeResponse) => void;
   onSkip: () => void; // NEW — lets the user plan without a song
@@ -36,7 +42,13 @@ export default function UploadPanel({ onVideoLoaded, onSkip, sessionId }: Upload
   const [songTitle, setSongTitle] = useState("");
   const [artistName, setArtistName] = useState("");
   const [skipped, setSkipped] = useState(false); // NEW — local view state
+  // null = auto (collapses once a song is loaded/skipped, freeing room for
+  // chat below), true/false = user has clicked the chevron to override it.
+  const [manualOverride, setManualOverride] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const done = status === "success" || skipped;
+  const collapsed = manualOverride ?? done;
 
   const handleAnalyze = async () => {
     setStatus("loading");
@@ -91,6 +103,7 @@ export default function UploadPanel({ onVideoLoaded, onSkip, sessionId }: Upload
     setSongTitle("");
     setArtistName("");
     setSkipped(false);
+    setManualOverride(null);
   };
 
   const handleSkipClick = () => {
@@ -100,16 +113,44 @@ export default function UploadPanel({ onVideoLoaded, onSkip, sessionId }: Upload
 
   const handleUndoSkip = () => {
     setSkipped(false);
+    setManualOverride(null);
   };
 
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setManualOverride(false)}
+        className="w-full flex items-center gap-3 px-5 py-3 border-b border-slate-200 shrink-0 hover:bg-slate-50 transition-colors text-left"
+      >
+        <div className="w-7 h-7 bg-slate-800 rounded-lg flex items-center justify-center shrink-0 overflow-hidden">
+          <img src="/LOGO.png" alt="DropOperator" className="w-full h-full object-contain" />
+        </div>
+        <span className="flex-1 min-w-0 text-sm text-slate-600 truncate">
+          {skipped ? "Planning without a song" : `🎵 ${videoTitle}`}
+        </span>
+        <ChevronIcon direction="right" />
+      </button>
+    );
+  }
+
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+    <div className="p-5 border-b border-slate-200 shrink-0">
       {/* Header */}
       <div className="flex items-center gap-3 mb-5">
         <div className="w-10 h-10 bg-slate-800 rounded-xl flex items-center justify-center">
           <img src="/LOGO.png" alt="DropOperator" className="w-full h-full object-contain" />
         </div>
-
+        {done && (
+          <button
+            type="button"
+            onClick={() => setManualOverride(true)}
+            className="ml-auto p-1.5 rounded-lg hover:bg-slate-50 transition-colors"
+            title="Collapse"
+          >
+            <ChevronIcon direction="down" />
+          </button>
+        )}
       </div>
 
       {/* Skipped state — planning without a song */}

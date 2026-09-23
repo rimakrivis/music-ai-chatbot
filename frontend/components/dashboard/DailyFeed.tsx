@@ -180,7 +180,7 @@ export default function DailyFeed({ events, onEventClick, onDeleteEvent, onResch
   if (sortedDates.length === 0) {
     return (
       <div className="flex flex-col">
-        <h1 className="text-3xl font-bold text-slate-800 mb-8">Daily Dashboard</h1>
+        <h1 className="text-2xl md:text-3xl font-bold text-slate-800 mb-5 md:mb-8">Daily Dashboard</h1>
         <p className="text-slate-400 text-sm">No events yet. Upload a song to generate your release plan.</p>
       </div>
     );
@@ -188,7 +188,7 @@ export default function DailyFeed({ events, onEventClick, onDeleteEvent, onResch
 
   return (
     <div className="flex flex-col">
-      <h1 className="text-3xl font-bold text-slate-800 mb-8">Daily Dashboard</h1>
+      <h1 className="text-2xl md:text-3xl font-bold text-slate-800 mb-5 md:mb-8">Daily Dashboard</h1>
       <div className="flex flex-col gap-6">
         {sortedDates.map((dateStr) => {
           const { day, weekday } = formatDayInfo(dateStr);

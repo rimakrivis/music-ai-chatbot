@@ -5,14 +5,24 @@ import { updateProjectDetails } from "@/lib/api";
 
 interface ConcertDetailsCaptureProps {
   projectId: number;
+  chatActive: boolean; // true once the user has sent a chat message — auto-collapses this panel
 }
 
 type TicketOwner = "manager" | "venue";
 
-export default function ConcertDetailsCapture({ projectId }: ConcertDetailsCaptureProps) {
+const ChevronIcon = ({ direction }: { direction: "down" | "right" }) => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2">
+    {direction === "down" ? <path d="M6 9l6 6 6-6" /> : <path d="M9 6l6 6-6 6" />}
+  </svg>
+);
+
+export default function ConcertDetailsCapture({ projectId, chatActive }: ConcertDetailsCaptureProps) {
   const [ticketOwner, setTicketOwner] = useState<TicketOwner | null>(null);
   const [isPaid, setIsPaid] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
+  // null = auto (collapses once the chat is in use), true/false = user override.
+  const [manualOverride, setManualOverride] = useState<boolean | null>(null);
+  const collapsed = manualOverride ?? chatActive;
 
   const saveField = async (details: Record<string, unknown>) => {
     setSaving(true);
@@ -35,9 +45,39 @@ export default function ConcertDetailsCapture({ projectId }: ConcertDetailsCaptu
     saveField({ is_paid: value });
   };
 
+  if (collapsed) {
+    const summary = [
+      ticketOwner === "manager" ? "I'm making tickets" : ticketOwner === "venue" ? "Venue tickets" : null,
+      isPaid === true ? "Paid" : isPaid === false ? "Free" : null,
+    ].filter(Boolean).join(" · ") || "Quick concert details";
+
+    return (
+      <button
+        type="button"
+        onClick={() => setManualOverride(false)}
+        className="w-full flex items-center gap-3 px-5 py-3 border-b border-slate-200 shrink-0 hover:bg-slate-50 transition-colors text-left"
+      >
+        <span className="flex-1 min-w-0 text-sm text-slate-600 truncate">{summary}</span>
+        <ChevronIcon direction="right" />
+      </button>
+    );
+  }
+
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 space-y-4">
-      <p className="text-slate-600 text-sm font-medium">Quick concert details</p>
+    <div className="p-5 border-b border-slate-200 shrink-0 space-y-4">
+      <div className="flex items-center gap-3">
+        <p className="text-slate-600 text-sm font-medium flex-1">Quick concert details</p>
+        {chatActive && (
+          <button
+            type="button"
+            onClick={() => setManualOverride(true)}
+            className="p-1.5 -m-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            title="Collapse"
+          >
+            <ChevronIcon direction="down" />
+          </button>
+        )}
+      </div>
 
       <div>
         <p className="text-xs text-slate-500 mb-2">Who's making the tickets?</p>

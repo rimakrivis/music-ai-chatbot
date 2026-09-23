@@ -192,12 +192,12 @@ export default function EventDrawer({
       />
 
       <div
-        className={`fixed top-0 right-0 h-full z-50 flex transition-transform duration-300 ease-out
+        className={`fixed top-0 right-0 h-full z-50 flex flex-col md:flex-row transition-transform duration-300 ease-out
           ${isVisible ? "translate-x-0" : "translate-x-full"}
           w-full max-w-2xl`}
       >
         {/* Left panel: Notes */}
-        <div className="w-[45%] flex flex-col bg-slate-50 border-r border-slate-200 overflow-hidden">
+        <div className="w-full md:w-[45%] max-h-[35vh] md:max-h-none flex flex-col bg-slate-50 border-b md:border-b-0 md:border-r border-slate-200 overflow-hidden shrink-0">
           <div className={`${colors.bg} px-4 py-4 border-b border-slate-200 shrink-0`}>
             <div className="flex items-center gap-2 mb-1">
               <span className={`${colors.icon} text-xs font-semibold uppercase tracking-wide`}>
@@ -232,7 +232,7 @@ export default function EventDrawer({
         </div>
 
         {/* Right panel: Chat */}
-        <div className="flex-1 flex flex-col bg-white overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col bg-white overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
             <span className="text-sm font-semibold text-slate-700">Creative Assistant</span>
             <button

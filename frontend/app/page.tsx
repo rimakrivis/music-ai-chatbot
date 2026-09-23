@@ -438,67 +438,65 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#f7f5f2] p-6">
-      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-[auto_1fr_340px] gap-6 h-[calc(100vh-48px)]">
+    <div className="flex flex-col md:flex-row md:h-screen md:overflow-hidden bg-[#f7f5f2]">
 
-        <Sidebar
-          events={visibleEvents}
-          onEventClick={handleEventClick}
-          progress={progressPercent}
-          todos={visibleTodos}
-          onOpenTodoDrawer={() => setTodoDrawerOpen(true)}
-          onOpenBandProfile={() => setBandProfileOpen(true)}
-          activeProjectType={projectType}
-          onSelectProjectType={setProjectType}
-          onShowAgenda={() => setProjectType(null)}
-          onOpenAddEventModal={() => setAddEventModalOpen(true)}
-          onReset={handleReset}
-        />
+      <Sidebar
+        events={visibleEvents}
+        onEventClick={handleEventClick}
+        progress={progressPercent}
+        todos={visibleTodos}
+        onOpenTodoDrawer={() => setTodoDrawerOpen(true)}
+        onOpenBandProfile={() => setBandProfileOpen(true)}
+        activeProjectType={projectType}
+        onSelectProjectType={setProjectType}
+        onShowAgenda={() => setProjectType(null)}
+        onOpenAddEventModal={() => setAddEventModalOpen(true)}
+        onReset={handleReset}
+      />
 
-        <main className="overflow-y-auto pr-2 -mr-2">
-          {visibleEvents.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
-              <span className="text-5xl">🎵</span>
-              <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
-            </div>
-          ) : (
-            <DailyFeed
-              events={visibleEvents}
-              onEventClick={handleEventClick}
-              onDeleteEvent={handleDeleteEvent}
-              onRescheduleEvent={handleRescheduleEvent}
-            />
-          )}
-        </main>
-
-        <aside className="flex flex-col gap-5 lg:sticky lg:top-6 lg:h-fit">
-          {(projectType === "single_release" || projectType === "album_release") && (
-            <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
-          )}
-          {projectType === "concert" && currentProjectId && (
-            <ConcertDetailsCapture projectId={currentProjectId} />
-          )}
-          <AIChatbot
-            messages={chatMessages}
-            onSendMessage={handleSendMessage}
-            isLoading={isChatLoading}
-            renderTaskCard={(msg, i) => {
-              if (!msg.tasks || msg.tasksConfirmed) return null;
-              return (
-                <TaskConfirmationCard
-                  bandId={bandId}
-                  videoId={videoInfo?.video_id ?? ""}
-                  projectId={msg.projectId}
-                  calendarEvents={msg.tasks.calendar_events}
-                  todoItems={msg.tasks.todo_items}
-                  onConfirm={() => handleTaskConfirm(i)}
-                  onDismiss={() => handleTaskDismiss(i)}
-                />
-              );
-            }}
+      <main className="flex-1 min-w-0 md:h-full md:overflow-y-auto bg-[#f7f5f2] px-4 py-6 md:px-6 md:py-8 lg:px-10">
+        {visibleEvents.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-64 text-slate-400 gap-3">
+            <span className="text-5xl">🎵</span>
+            <p className="text-sm">Load a song and ask for a marketing plan to see your schedule here.</p>
+          </div>
+        ) : (
+          <DailyFeed
+            events={visibleEvents}
+            onEventClick={handleEventClick}
+            onDeleteEvent={handleDeleteEvent}
+            onRescheduleEvent={handleRescheduleEvent}
           />
-        </aside>
-      </div>
+        )}
+      </main>
+
+      <aside className="flex flex-col w-full md:w-[320px] lg:w-[380px] md:h-full md:overflow-hidden bg-white border-t md:border-t-0 md:border-l border-slate-200 shrink-0">
+        {(projectType === "single_release" || projectType === "album_release") && (
+          <UploadPanel onVideoLoaded={handleVideoLoaded} onSkip={handleSkipUpload} sessionId={sessionId} />
+        )}
+        {projectType === "concert" && currentProjectId && (
+          <ConcertDetailsCapture projectId={currentProjectId} chatActive={chatMessages.length > 0} />
+        )}
+        <AIChatbot
+          messages={chatMessages}
+          onSendMessage={handleSendMessage}
+          isLoading={isChatLoading}
+          renderTaskCard={(msg, i) => {
+            if (!msg.tasks || msg.tasksConfirmed) return null;
+            return (
+              <TaskConfirmationCard
+                bandId={bandId}
+                videoId={videoInfo?.video_id ?? ""}
+                projectId={msg.projectId}
+                calendarEvents={msg.tasks.calendar_events}
+                todoItems={msg.tasks.todo_items}
+                onConfirm={() => handleTaskConfirm(i)}
+                onDismiss={() => handleTaskDismiss(i)}
+              />
+            );
+          }}
+        />
+      </aside>
 
       {/* Calendar-event click still opens EventDrawer exactly as before —
           untouched by the sidebar refactor. */}

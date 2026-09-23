@@ -112,7 +112,9 @@ export default function Sidebar({
   onOpenAddEventModal,
   onReset,
 }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(false);
+  // null = auto (CSS decides: icon-only at tablet widths, expanded at desktop),
+  // true/false = user has explicitly overridden the toggle at any width.
+  const [manualOverride, setManualOverride] = useState<boolean | null>(null);
   const [openSection, setOpenSection] = useState<AccordionSection>("calendar");
 
   const toggleSection = (section: AccordionSection) =>
@@ -120,20 +122,49 @@ export default function Sidebar({
 
   const completedTodos = todos.filter((t) => t.completed).length;
 
+  const handleToggle = () => {
+    const currentlyIconOnly =
+      manualOverride !== null
+        ? manualOverride
+        : typeof window !== "undefined" &&
+          window.matchMedia("(min-width: 768px) and (max-width: 1023.98px)").matches;
+    setManualOverride(!currentlyIconOnly);
+  };
+
+  const widthClass =
+    manualOverride === true
+      ? "w-full md:w-[68px]"
+      : manualOverride === false
+      ? "w-full md:w-[320px]"
+      : "w-full md:w-[68px] lg:w-[320px]";
+
+  // Label/body visibility mirrors widthClass so icon-only sections stay
+  // mounted (just hidden) instead of unmounting per breakpoint.
+  const labelClass =
+    manualOverride === true
+      ? "hidden"
+      : manualOverride === false
+      ? "inline"
+      : "inline md:hidden lg:inline";
+  const bodyClass =
+    manualOverride === true
+      ? "hidden"
+      : manualOverride === false
+      ? "block"
+      : "block md:hidden lg:block";
+
   const navItemClass =
     "flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-sm text-slate-600 hover:bg-slate-50 transition-colors w-full text-left";
 
   return (
     <aside
-      className={`flex flex-col bg-white rounded-2xl border border-slate-100 shadow-sm p-3.5 lg:sticky lg:top-6 lg:h-fit lg:max-h-[calc(100vh-48px)] overflow-y-auto transition-[width] ${
-        collapsed ? "w-[68px]" : "w-[220px]"
-      }`}
+      className={`flex flex-col bg-white border-b md:border-b-0 md:border-r border-slate-200 p-3.5 md:h-full md:overflow-y-auto transition-[width] shrink-0 ${widthClass}`}
     >
       <button
         type="button"
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={handleToggle}
         className="p-2 rounded-xl hover:bg-slate-50 transition-colors mb-2 self-start"
-        title={collapsed ? "Expand" : "Collapse"}
+        title="Toggle sidebar"
       >
         <IconMenu />
       </button>
@@ -148,7 +179,7 @@ export default function Sidebar({
         }`}
       >
         <IconAgenda active={!activeProjectType} />
-        {!collapsed && <span className="font-medium">Agenda</span>}
+        <span className={`font-medium ${labelClass}`}>Agenda</span>
       </button>
 
       {/* Calendar accordion */}
@@ -156,12 +187,14 @@ export default function Sidebar({
         <button type="button" onClick={() => toggleSection("calendar")} className={navItemClass + " justify-between"}>
           <span className="flex items-center gap-2.5">
             <IconAgenda />
-            {!collapsed && "Calendar"}
+            <span className={labelClass}>Calendar</span>
           </span>
-          {!collapsed && <IconChevron direction={openSection === "calendar" ? "down" : "right"} />}
+          <span className={labelClass}>
+            <IconChevron direction={openSection === "calendar" ? "down" : "right"} />
+          </span>
         </button>
-        {!collapsed && openSection === "calendar" && (
-          <div className="pt-1 pb-2 px-0.5">
+        {openSection === "calendar" && (
+          <div className={`pt-1 pb-2 px-0.5 ${bodyClass}`}>
             <MiniCalendar events={events} onEventClick={onEventClick} />
           </div>
         )}
@@ -172,12 +205,14 @@ export default function Sidebar({
         <button type="button" onClick={() => toggleSection("progress")} className={navItemClass + " justify-between"}>
           <span className="flex items-center gap-2.5">
             <IconProgress />
-            {!collapsed && "Progress"}
+            <span className={labelClass}>Progress</span>
           </span>
-          {!collapsed && <IconChevron direction={openSection === "progress" ? "down" : "right"} />}
+          <span className={labelClass}>
+            <IconChevron direction={openSection === "progress" ? "down" : "right"} />
+          </span>
         </button>
-        {!collapsed && openSection === "progress" && (
-          <div className="pt-1 pb-2 px-0.5">
+        {openSection === "progress" && (
+          <div className={`pt-1 pb-2 px-0.5 ${bodyClass}`}>
             <ProgressBar progress={progress} />
           </div>
         )}
@@ -187,10 +222,10 @@ export default function Sidebar({
       <button type="button" onClick={onOpenTodoDrawer} className={navItemClass + " justify-between"}>
         <span className="flex items-center gap-2.5">
           <IconTodo />
-          {!collapsed && "To-do list"}
+          <span className={labelClass}>To-do list</span>
         </span>
-        {!collapsed && todos.length > 0 && (
-          <span className="text-[10px] text-slate-400 border border-slate-200 rounded-md px-1.5 py-0.5">
+        {todos.length > 0 && (
+          <span className={`text-[10px] text-slate-400 border border-slate-200 rounded-md px-1.5 py-0.5 ${labelClass}`}>
             {completedTodos}/{todos.length}
           </span>
         )}
@@ -201,7 +236,7 @@ export default function Sidebar({
       {/* Band profile — above Projects, per approved layout */}
       <button type="button" onClick={onOpenBandProfile} className={navItemClass}>
         <IconBandProfile />
-        {!collapsed && "Band profile"}
+        <span className={labelClass}>Band profile</span>
       </button>
 
       {/* Projects accordion — nests the "what are you planning?" type buttons */}
@@ -209,12 +244,14 @@ export default function Sidebar({
         <button type="button" onClick={() => toggleSection("projects")} className={navItemClass + " justify-between"}>
           <span className="flex items-center gap-2.5">
             <IconProjects />
-            {!collapsed && "Projects"}
+            <span className={labelClass}>Projects</span>
           </span>
-          {!collapsed && <IconChevron direction={openSection === "projects" ? "down" : "right"} />}
+          <span className={labelClass}>
+            <IconChevron direction={openSection === "projects" ? "down" : "right"} />
+          </span>
         </button>
-        {!collapsed && openSection === "projects" && (
-          <div className="pt-0.5 pb-1 pl-2 flex flex-col gap-0.5">
+        {openSection === "projects" && (
+          <div className={`pt-0.5 pb-1 pl-2 flex flex-col gap-0.5 ${bodyClass}`}>
             {PROJECT_TYPES.map((pt) => {
               const active = activeProjectType === pt.id;
               return (
@@ -238,7 +275,7 @@ export default function Sidebar({
       {/* Manual calendar entry — independent of the agent flow */}
       <button type="button" onClick={onOpenAddEventModal} className={navItemClass}>
         <IconAddEvent />
-        {!collapsed && "Add to calendar"}
+        <span className={labelClass}>Add to calendar</span>
       </button>
 
       <div className="flex-1" />
@@ -251,7 +288,7 @@ export default function Sidebar({
         title="Clear band data"
       >
         <IconReset />
-        {!collapsed && "reset"}
+        <span className={labelClass}>reset</span>
       </button>
     </aside>
   );
