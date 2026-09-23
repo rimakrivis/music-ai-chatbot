@@ -46,15 +46,6 @@ export default function AIChatbot({ messages, onSendMessage, isLoading = false, 
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
-        <div className="flex items-start gap-2">
-          <div className="w-6 h-6 bg-slate-800 rounded-lg flex items-center justify-center shrink-0">
-            <span className="text-white text-xs">X</span>
-          </div>
-          <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-600 max-w-[90%]">
-            What's your release date? I'll build your full rollout plan.
-          </div>
-        </div>
-
         {messages.map((msg, i) => (
           <div key={i}>
             <div className={`flex items-start gap-2 ${msg.role === "user" ? "justify-end" : ""}`}>

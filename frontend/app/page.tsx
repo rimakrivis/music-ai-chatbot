@@ -74,7 +74,7 @@ export default function DashboardPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       role: "assistant",
-      content: "Paste a YouTube URL above to load a song, then ask me anything about it — lyrics, marketing plan, release strategy, Spotify stats, and more. Or skip the upload to plan a concert or campaign instead.",
+      content: "What are you planning today? Tell me about a release, concert, or campaign — or paste a YouTube URL above to start with a song.",
     },
   ]);
   const [isChatLoading, setIsChatLoading] = useState(false);
@@ -338,7 +338,7 @@ export default function DashboardPage() {
     setTodos([]);
     setProjectType(null);
     setChatMessages([
-      { role: "assistant", content: "Session cleared. Paste a YouTube URL to start fresh, or skip to plan without one." },
+      { role: "assistant", content: "Session cleared. What are you planning today? Tell me about a release, concert, or campaign — or paste a YouTube URL to start with a song." },
     ]);
   }, [API, bandId]);
 
